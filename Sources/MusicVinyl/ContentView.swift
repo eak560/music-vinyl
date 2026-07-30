@@ -7,8 +7,27 @@ struct ContentView: View {
     /// Last pointer angle during a drag, in degrees; nil when not dragging.
     @State private var dragAngle: Double?
     @State private var isFullScreen = false
+    @State private var showingPlaylists = false
+    @StateObject private var library = PlaylistLibrary()
 
     var body: some View {
+        mainContent
+            .overlay {
+                if showingPlaylists {
+                    PlaylistPanel(library: library) { withAnimation { showingPlaylists = false } }
+                        .padding(isFullScreen ? 60 : 10)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.22), value: showingPlaylists)
+    }
+
+    private func togglePlaylists() {
+        library.loadIfNeeded()
+        withAnimation { showingPlaylists.toggle() }
+    }
+
+    private var mainContent: some View {
         VStack(spacing: 10) {
             GeometryReader { geo in
                 ZStack {
@@ -42,7 +61,7 @@ struct ContentView: View {
 
             // Always laid out, only faded — appearing and disappearing would
             // resize everything above it on every hover.
-            TransportControls()
+            TransportControls(onPlaylists: togglePlaylists)
                 .opacity(controlsVisible ? 1 : 0)
                 .scaleEffect(controlsVisible ? 1 : 0.96)
                 .allowsHitTesting(controlsVisible)
@@ -136,6 +155,13 @@ struct ContentView: View {
                     .opacity(0.7)
                     .lineLimit(1)
             }
+            if !model.track.playlist.isEmpty {
+                Label(model.track.playlist, systemImage: "music.note.list")
+                    .font(.system(size: 10))
+                    .opacity(0.55)
+                    .lineLimit(1)
+                    .padding(.top, 1)
+            }
         }
         .foregroundStyle(.white)
         .shadow(color: .black.opacity(0.8), radius: 3, y: 1)
@@ -157,6 +183,7 @@ struct ContentView: View {
         Toggle("Glass Background", isOn: $model.glassBackground)
         Toggle("Look Up Artwork Online", isOn: $model.onlineArtwork)
         Divider()
+        Button(showingPlaylists ? "Hide Playlists" : "Show Playlists") { togglePlaylists() }
         Button(isFullScreen ? "Exit Full Screen" : "Enter Full Screen") {
             WindowConfigurator.toggleFullScreen()
         }
@@ -174,12 +201,15 @@ struct ContentView: View {
 /// Play/pause and skip, revealed on hover over the record.
 private struct TransportControls: View {
     @EnvironmentObject private var model: NowPlayingModel
+    let onPlaylists: () -> Void
 
     var body: some View {
-        HStack(spacing: 22) {
+        HStack(spacing: 18) {
             button("backward.fill") { model.previous() }
             button(model.state.isPlaying ? "pause.fill" : "play.fill", size: 22) { model.playPause() }
             button("forward.fill") { model.next() }
+            Divider().frame(height: 18).overlay(.white.opacity(0.2))
+            button("music.note.list", size: 15, action: onPlaylists)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)

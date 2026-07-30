@@ -8,6 +8,81 @@ enum PreviewRender {
     static func runIfRequested() {
         let args = CommandLine.arguments
         if args.contains("--selftest") { SelfTest.run() }
+        // Renders the real panel with the real library, so layout problems show
+        // up without needing to click anything.
+        if let flag = args.firstIndex(of: "--render-playlists") {
+            let path = args.count > flag + 1 ? args[flag + 1] : "playlists.png"
+            let model = NowPlayingModel()
+            let library = PlaylistLibrary()
+            library.reload()
+            Pump.wait(timeout: 10) { !library.playlists.isEmpty }
+            if ProcessInfo.processInfo.environment["PREVIEW_TRACKS"] != nil,
+               let first = library.playlists.first(where: { $0.name.count > 4 }) ?? library.playlists.first {
+                library.select(first)
+                Pump.wait(timeout: 10) { !library.tracks.isEmpty }
+            }
+            Pump.drain(0.4)
+            print("state: playlists=\(library.playlists.count) tracks=\(library.tracks.count) " +
+                  "loading=\(library.isLoading) selected=\(library.selected?.name ?? "-")")
+            let scene = PlaylistPanel(library: library, onClose: {})
+                .environmentObject(model)
+                .padding(10)
+                .frame(width: 380, height: 430)
+                .background(Color(white: 0.1))
+            let renderer = ImageRenderer(content: scene)
+            renderer.scale = 2
+            guard let cg = renderer.cgImage,
+                  let data = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])
+            else { exit(1) }
+            try? data.write(to: URL(fileURLWithPath: path))
+            print("wrote \(path)")
+            exit(0)
+        }
+        if args.contains("--playlists") {
+            var lists: [MusicPlaylist]?
+            MusicBridge.shared.fetchPlaylists { lists = $0 }
+            Pump.wait(timeout: 20) { lists != nil }
+            let playlists = lists ?? []
+            print("playlists: \(playlists.count)")
+            for playlist in playlists.prefix(6) { print("  \(playlist.name)  [\(playlist.id)]") }
+            if let first = playlists.first {
+                var tracks: [PlaylistTrack]?
+                let started = Date()
+                MusicBridge.shared.fetchTracks(inPlaylistWithID: first.id) { tracks = $0 }
+                Pump.wait(timeout: 20) { tracks != nil }
+                let rows = tracks ?? []
+                print(String(format: "tracks in %@: %d in %.0f ms",
+                             first.name, rows.count, Date().timeIntervalSince(started) * 1000))
+                for row in rows.prefix(4) { print("  \(row.id). \(row.title) — \(row.artist)") }
+            }
+            exit(0)
+        }
+        // --lookup "<title>" "<artist>" "<album>" exercises the artwork search
+        // for a track that isn't currently playing.
+        if let flag = args.firstIndex(of: "--lookup") {
+            var probe = Track()
+            probe.title = args.count > flag + 1 ? args[flag + 1] : ""
+            probe.artist = args.count > flag + 2 ? args[flag + 2] : ""
+            probe.album = args.count > flag + 3 ? args[flag + 3] : ""
+            probe.id = "probe"
+            print("lookup: \(probe.title) / \(probe.artist) / \(probe.album)")
+            var done = false
+            let started = Date()
+            CatalogArtwork.shared.fetchArtwork(for: probe) { image in
+                let ms = Date().timeIntervalSince(started) * 1000
+                print(String(format: "  result: %@ in %.0f ms",
+                             image.map { "\(Int($0.size.width))x\(Int($0.size.height))" } ?? "none", ms))
+                if let image, let path = ProcessInfo.processInfo.environment["DUMP_ARTWORK"],
+                   let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+                   let png = rep.representation(using: .png, properties: [:]) {
+                    try? png.write(to: URL(fileURLWithPath: path))
+                    print("  wrote \(path)")
+                }
+                done = true
+            }
+            Pump.wait(timeout: 25) { done }
+            exit(0)
+        }
 
         if args.contains("--dump-state") {
             var read: Snapshot?

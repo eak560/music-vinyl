@@ -24,6 +24,8 @@ struct Track: Equatable {
     /// unreliable — it reports none at all for some, and a stale cover from a
     /// different release for others — so they are treated differently.
     var isStreaming = false
+    /// Name of the playlist being played from, when there is one.
+    var playlist: String = ""
 
     var isEmpty: Bool { title.isEmpty && artist.isEmpty }
 }
@@ -48,11 +50,15 @@ final class MusicBridge {
     private lazy var snapshotScript: NSAppleScript? = compile("""
     tell application id "com.apple.Music"
         set theState to (player state as text)
-        if theState is "stopped" then return {theState, "", "", "", 0, 0, "", ""}
+        if theState is "stopped" then return {theState, "", "", "", 0, 0, "", "", ""}
         set theTrack to current track
+        set theList to ""
+        try
+            set theList to (name of current playlist as text)
+        end try
         return {theState, (name of theTrack as text), (artist of theTrack as text), ¬
                 (album of theTrack as text), (duration of theTrack), (player position), ¬
-                (persistent ID of theTrack as text), (class of theTrack as text)}
+                (persistent ID of theTrack as text), (class of theTrack as text), theList}
     end tell
     """)
 
@@ -98,7 +104,7 @@ final class MusicBridge {
         guard let result = snapshotScript?.executeAndReturnError(&error), error == nil else {
             return Snapshot(state: .notRunning)
         }
-        guard result.numberOfItems >= 8 else { return Snapshot(state: .stopped) }
+        guard result.numberOfItems >= 9 else { return Snapshot(state: .stopped) }
 
         func string(_ index: Int) -> String { result.atIndex(index)?.stringValue ?? "" }
         func number(_ index: Int) -> Double { result.atIndex(index)?.doubleValue ?? 0 }
@@ -120,6 +126,7 @@ final class MusicBridge {
         track.position = number(6)
         track.id = string(7)
         track.isStreaming = string(8).localizedCaseInsensitiveContains("URL track")
+        track.playlist = string(9)
         if track.id.isEmpty { track.id = "\(track.title)|\(track.artist)|\(track.album)" }
 
         return Snapshot(state: state, track: track)
@@ -148,7 +155,23 @@ final class MusicBridge {
     /// snapshot that was already queued behind an older state is guaranteed to
     /// be delivered *before* this completion — which is what lets the caller
     /// tell stale readings from fresh ones.
-    private func perform(_ command: String, completion: (() -> Void)? = nil) {
+    /// Runs an arbitrary script on the AppleScript queue and hands the raw
+    /// descriptor back on the main queue. Used by the playlist browser, which
+    /// needs list results rather than a fixed snapshot shape.
+    func runScript(_ source: String, completion: @escaping (NSAppleEventDescriptor?) -> Void) {
+        guard isMusicRunning else {
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+        queue.async {
+            var error: NSDictionary?
+            let result = NSAppleScript(source: source)?.executeAndReturnError(&error)
+            if let error { Trace.log("runScript error: \(error)") }
+            DispatchQueue.main.async { completion(error == nil ? result : nil) }
+        }
+    }
+
+    func perform(_ command: String, completion: (() -> Void)? = nil) {
         guard isMusicRunning else {
             if let completion { DispatchQueue.main.async(execute: completion) }
             return

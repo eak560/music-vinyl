@@ -1,17 +1,15 @@
 import AppKit
 import Foundation
 
-/// Last-resort artwork source for Apple Music streaming tracks.
+/// Artwork source for Apple Music streaming tracks.
 ///
-/// Music exposes no artwork at all for `URL track`s (streaming songs that are
-/// not in the library) — `count of artworks` stays 0 for the whole song — and
-/// MediaRemote, which the system's own now-playing UI uses, has been restricted
-/// to Apple-signed binaries since macOS 15.4. So the only way to put a real
-/// cover on the record is to look it up.
+/// Music exposes no artwork at all for some `URL track`s, and a cover from an
+/// entirely different release for others, so streaming tracks are looked up
+/// here instead. MediaRemote, which the system's own now-playing UI uses, has
+/// been restricted to Apple-signed binaries since macOS 15.4.
 ///
-/// This is the one part of the app that touches the network. It runs only after
-/// the local AppleScript route has come back empty, and only while the user
-/// leaves "Look Up Artwork Online" enabled.
+/// This is the one part of the app that touches the network. Library tracks
+/// never reach it, and the user can switch it off entirely.
 final class CatalogArtwork {
     static let shared = CatalogArtwork()
 
@@ -40,49 +38,82 @@ final class CatalogArtwork {
             return
         }
 
+        let id = track.id
+        // Pass 1: the track itself.
+        search(term: "\(track.artist) \(track.title)",
+               pick: { Self.trackMatch(in: $0, for: track) }) { [weak self] url in
+            guard let self else { return }
+            if let url {
+                self.download(url, for: id, completion: completion)
+                return
+            }
+            // Pass 2: the album it came from. Apple's search index does not
+            // surface every track — "Japanese Denim" is absent entirely, and a
+            // title search returns only instrumental covers by other artists —
+            // but the album is usually there, and its cover is what Music shows
+            // anyway.
+            guard !track.album.isEmpty else {
+                self.finish(nil, for: id, completion: completion)
+                return
+            }
+            self.search(term: "\(track.artist) \(track.album)",
+                        pick: { Self.albumMatch(in: $0, for: track) }) { albumURL in
+                guard let albumURL else {
+                    self.finish(nil, for: id, completion: completion)
+                    return
+                }
+                self.download(albumURL, for: id, completion: completion)
+            }
+        }
+    }
+
+    // MARK: - Requests
+
+    private func search(term: String,
+                        pick: @escaping ([[String: Any]]) -> URL?,
+                        completion: @escaping (URL?) -> Void) {
         var components = URLComponents(string: "https://itunes.apple.com/search")!
         components.queryItems = [
-            URLQueryItem(name: "term", value: "\(track.artist) \(track.title)"),
+            URLQueryItem(name: "term", value: term),
             URLQueryItem(name: "entity", value: "song"),
-            URLQueryItem(name: "limit", value: "10")
+            // The wanted result is often well down the ranking.
+            URLQueryItem(name: "limit", value: "25")
         ]
         guard let url = components.url else {
-            completion(nil)
+            DispatchQueue.main.async { completion(nil) }
             return
         }
 
-        let id = track.id
-        session.dataTask(with: url) { [weak self] data, _, _ in
-            guard let data,
-                  let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let results = payload["results"] as? [[String: Any]],
-                  let artworkURL = Self.bestArtworkURL(in: results, for: track)
-            else {
-                DispatchQueue.main.async {
-                    self?.remember(nil, for: id)
-                    completion(nil)
-                }
-                return
+        session.dataTask(with: url) { data, _, _ in
+            var results: [[String: Any]] = []
+            if let data,
+               let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let rows = payload["results"] as? [[String: Any]] {
+                results = rows
             }
-
-            self?.session.dataTask(with: artworkURL) { imageData, _, _ in
-                let image = imageData.flatMap(NSImage.init(data:))
-                DispatchQueue.main.async {
-                    self?.remember(image, for: id)
-                    completion(image)
-                }
-            }.resume()
+            let match = pick(results)
+            DispatchQueue.main.async { completion(match) }
         }.resume()
     }
 
-    private func remember(_ image: NSImage?, for id: String) {
-        cache[id] = image
+    private func download(_ url: URL, for id: String, completion: @escaping (NSImage?) -> Void) {
+        session.dataTask(with: url) { [weak self] data, _, _ in
+            let image = data.flatMap(NSImage.init(data:))
+            DispatchQueue.main.async { self?.finish(image, for: id, completion: completion) }
+        }.resume()
     }
+
+    private func finish(_ image: NSImage?, for id: String, completion: @escaping (NSImage?) -> Void) {
+        cache[id] = image
+        completion(image)
+    }
+
+    // MARK: - Matching
 
     /// Case, accents and qualifiers like "(Radio Edit)" or "- Single" vary
     /// between what Music reports and what the catalogue lists; none of them
     /// change which song it is.
-    private static func normalize(_ value: String) -> String {
+    static func normalize(_ value: String) -> String {
         var text = value.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
         text = text.replacingOccurrences(of: "\\([^)]*\\)", with: " ", options: .regularExpression)
         text = text.replacingOccurrences(of: "\\[[^\\]]*\\]", with: " ", options: .regularExpression)
@@ -95,31 +126,40 @@ final class CatalogArtwork {
         return text.trimmingCharacters(in: .whitespaces)
     }
 
-    /// Picks the result that actually matches the playing song, rather than
-    /// trusting the search ranking — a wrong cover is worse than none.
-    private static func bestArtworkURL(in results: [[String: Any]], for track: Track) -> URL? {
-        func matches(_ lhs: String?, _ rhs: String) -> Bool {
-            guard let lhs, !rhs.isEmpty else { return false }
-            return normalize(lhs) == normalize(rhs)
-        }
+    private static func matches(_ lhs: String?, _ rhs: String) -> Bool {
+        guard let lhs, !rhs.isEmpty else { return false }
+        return normalize(lhs) == normalize(rhs)
+    }
 
-        // The title must match. Matching only the artist would happily accept a
-        // different song by the same act — which is exactly how a cover from
-        // elsewhere in the same album ends up on the record.
-        let titleMatches = results.filter { matches($0["trackName"] as? String, track.title) }
-
-        let scored = titleMatches.map { result -> (Int, [String: Any]) in
+    /// A result for this exact song. The title must match — matching only the
+    /// artist would accept a different song by the same act, which is how a
+    /// cover from elsewhere in the same catalogue ends up on the record.
+    static func trackMatch(in results: [[String: Any]], for track: Track) -> URL? {
+        let titled = results.filter { matches($0["trackName"] as? String, track.title) }
+        let scored = titled.map { result -> (Int, [String: Any]) in
             var score = 0
             if matches(result["artistName"] as? String, track.artist) { score += 2 }
             if matches(result["collectionName"] as? String, track.album) { score += 2 }
             return (score, result)
         }
+        // Still require corroboration from the artist or the album, so a cover
+        // version by an unrelated act can't supply the image.
+        guard let best = scored.max(by: { $0.0 < $1.0 }), best.0 >= 2 else { return nil }
+        return artworkURL(from: best.1)
+    }
 
-        // Still require corroboration from the artist or the album.
-        guard let best = scored.max(by: { $0.0 < $1.0 }), best.0 >= 2,
-              let raw = best.1["artworkUrl100"] as? String
-        else { return nil }
+    /// Any track from the right album by the right artist — its artwork is the
+    /// album cover, which is what Music displays.
+    static func albumMatch(in results: [[String: Any]], for track: Track) -> URL? {
+        let match = results.first {
+            matches($0["artistName"] as? String, track.artist)
+                && matches($0["collectionName"] as? String, track.album)
+        }
+        return match.flatMap(artworkURL(from:))
+    }
 
+    private static func artworkURL(from result: [String: Any]) -> URL? {
+        guard let raw = result["artworkUrl100"] as? String else { return nil }
         // The API hands back a 100px thumbnail; the same path serves larger
         // sizes, and the record label is rendered well above 100px.
         return URL(string: raw.replacingOccurrences(of: "100x100bb", with: "600x600bb"))

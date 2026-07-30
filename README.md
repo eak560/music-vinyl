@@ -31,6 +31,10 @@ reads the current track. Deny it and the record will just sit still.
   speed, and it is fast).
 - **Glass Background** swaps the transparent window for a slow field of
   colour pulled from the current cover, under a frosted pane. Off by default.
+- **Playlists** from the hover controls or the right-click menu: your Music
+  playlists, and the tracks inside whichever one you open. Picking a track
+  plays it *within* its playlist, so the rest of the list follows. The
+  playlist a song is playing from is shown under the artist.
 - **Full screen** with ⌃⌘F, or from the right-click menu. The record scales
   up, the glass background squares off its corners, and always-on-top steps
   aside for the duration.
@@ -42,7 +46,9 @@ reads the current track. Deny it and the record will just sit still.
 | Piece | What it does |
 | --- | --- |
 | `MusicBridge.swift` | Apple events to Music.app: track info, artwork, transport |
-| `CatalogArtwork.swift` | Online cover lookup, used only when Music has none |
+| `CatalogArtwork.swift` | Online cover lookup for streaming tracks |
+| `PlaylistLibrary.swift` | Reads playlists and their tracks out of Music |
+| `PlaylistPanel.swift` | The playlist browser |
 | `Palette.swift` | Pulls representative colours out of the cover art |
 | `GlassBackground.swift` | The animated colour field behind the record |
 | `NowPlayingModel.swift` | Polls state, derives rotation angle from wall-clock time |
@@ -147,6 +153,12 @@ Apple-signed binaries. Measured on macOS 26.5, an ad-hoc-signed binary gets a
 `swift` interpreter returns the full payload including artwork. It was
 implemented, confirmed dead, and removed.
 
+The lookup runs in two passes. First the track itself. If that finds nothing,
+the album — because Apple's search index does not surface every song: a search
+for "Daniel Caesar Japanese Denim" returns instrumental covers by other
+artists and not the track itself, at any result limit. Its album is indexed
+though, and an album cover is what Music displays anyway.
+
 The lookup sends the artist and album of the playing track to
 `itunes.apple.com`. It is unauthenticated, uses an ephemeral URL session with
 cookies disabled, and caches per track so a song is looked up once. A result
@@ -179,6 +191,12 @@ checked without launching a window:
 - `VINYL_FULLSCREEN_TEST=1` — on launch, toggle full screen after 2s, log
   whether the window actually entered it, and exit. The menu item cannot be
   clicked from a script, and this is what caught the `.fullScreenNone` flag.
+- `--lookup "<title>" "<artist>" "<album>"` — run the artwork search for a
+  track that isn't playing. `DUMP_ARTWORK=path` writes the cover it found.
+- `--playlists` — list playlists and the tracks of the first one.
+- `--render-playlists out.png` — render the playlist panel with the real
+  library. Note `ImageRenderer` does not materialise `ScrollView` content, so
+  the rows come out blank; that is the renderer, not the panel.
 - `--selftest` — drive the tonearm and scrub handlers against a live Music.app
   and report pass/fail, then restore the playback state it started with. The
   gestures need a mouse to exercise otherwise. `VINYL_TRACE=1` adds a
