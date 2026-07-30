@@ -1,0 +1,103 @@
+import AppKit
+import SwiftUI
+
+/// Development helper: `MusicVinyl --render-preview <out.png>` renders the record
+/// offscreen and exits, so the artwork can be checked without launching a window.
+enum PreviewRender {
+    @MainActor
+    static func runIfRequested() {
+        let args = CommandLine.arguments
+        if args.contains("--dump-state") {
+            let snapshot = MusicBridge.shared.snapshotSynchronously()
+            print("state: \(snapshot.state.rawValue)")
+            print("title: \(snapshot.track.title)")
+            print("artist: \(snapshot.track.artist)")
+            print("album: \(snapshot.track.album)")
+            print("position: \(snapshot.track.position) / \(snapshot.track.duration)")
+            let semaphore = DispatchSemaphore(value: 0)
+            MusicBridge.shared.fetchArtwork { image in
+                print("artwork: \(image.map { "\(Int($0.size.width))x\(Int($0.size.height))" } ?? "none")")
+                semaphore.signal()
+            }
+            // fetchArtwork hops back to the main queue, which is this thread —
+            // pump the run loop until the callback lands.
+            while semaphore.wait(timeout: .now()) == .timedOut {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+            exit(0)
+        }
+        if let flag = args.firstIndex(of: "--render-icon") {
+            renderIcon(to: args.count > flag + 1 ? args[flag + 1] : "AppIcon.png")
+        }
+        guard let flag = args.firstIndex(of: "--render-preview") else { return }
+        let path = args.count > flag + 1 ? args[flag + 1] : "vinyl-preview.png"
+        let angle = Double(ProcessInfo.processInfo.environment["PREVIEW_ANGLE"] ?? "") ?? 24
+        let progress = Double(ProcessInfo.processInfo.environment["PREVIEW_PROGRESS"] ?? "") ?? 0.35
+        let withArt = ProcessInfo.processInfo.environment["PREVIEW_NOART"] == nil
+
+        let side: CGFloat = 720
+        let scene = ZStack {
+            Color(white: 0.16)
+            ZStack {
+                VinylView(
+                    artwork: withArt ? sampleArtwork(side: 512) : nil,
+                    angle: angle,
+                    title: "Midnight Ride",
+                    artist: "The Long Players"
+                )
+                TonearmView(progress: progress, engaged: true)
+            }
+            .padding(20)
+        }
+        .frame(width: side, height: side)
+
+        let renderer = ImageRenderer(content: scene)
+        renderer.scale = 2
+        guard let cg = renderer.cgImage else {
+            FileHandle.standardError.write(Data("render failed\n".utf8))
+            exit(1)
+        }
+        let rep = NSBitmapImageRep(cgImage: cg)
+        guard let data = rep.representation(using: .png, properties: [:]) else { exit(1) }
+        try? data.write(to: URL(fileURLWithPath: path))
+        print("wrote \(path)")
+        exit(0)
+    }
+
+    /// Renders the 1024pt master image the .icns is built from.
+    @MainActor
+    private static func renderIcon(to path: String) {
+        let side: CGFloat = 1024
+        let scene = ZStack {
+            VinylView(artwork: sampleArtwork(side: 512), angle: -18, title: "", artist: "")
+            TonearmView(progress: 0.12, engaged: true)
+        }
+        .frame(width: side, height: side)
+        .padding(side * 0.06)
+
+        let renderer = ImageRenderer(content: scene)
+        renderer.scale = 1
+        guard let cg = renderer.cgImage,
+              let data = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])
+        else { exit(1) }
+        try? data.write(to: URL(fileURLWithPath: path))
+        print("wrote \(path)")
+        exit(0)
+    }
+
+    /// Stand-in album art so the label can be evaluated without Music running.
+    private static func sampleArtwork(side: CGFloat) -> NSImage {
+        let image = NSImage(size: NSSize(width: side, height: side))
+        image.lockFocus()
+        let gradient = NSGradient(colors: [
+            NSColor(calibratedRed: 0.95, green: 0.36, blue: 0.24, alpha: 1),
+            NSColor(calibratedRed: 0.20, green: 0.15, blue: 0.45, alpha: 1)
+        ])
+        gradient?.draw(in: NSRect(x: 0, y: 0, width: side, height: side), angle: 45)
+        NSColor.white.withAlphaComponent(0.9).setFill()
+        NSBezierPath(rect: NSRect(x: side * 0.12, y: side * 0.46, width: side * 0.76, height: side * 0.03)).fill()
+        NSBezierPath(ovalIn: NSRect(x: side * 0.34, y: side * 0.60, width: side * 0.32, height: side * 0.32)).fill()
+        image.unlockFocus()
+        return image
+    }
+}
