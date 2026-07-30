@@ -153,24 +153,39 @@ final class NowPlayingModel: ObservableObject {
 
     private func loadArtwork(for id: String) {
         artworkAttempts += 1
-        // Local first — library tracks never cause a network request.
+        // Library tracks: Music's own artwork is authoritative, and asking it
+        // costs no network. Streaming tracks: Music's artwork has been observed
+        // returning a stale cover from a different release entirely, so prefer
+        // the catalogue, which is checked against the track's own title.
+        if track.isStreaming && onlineArtwork {
+            lookUpArtworkOnline(for: id, thenFallBackToMusic: true)
+        } else {
+            loadArtworkFromMusic(for: id)
+        }
+    }
+
+    private func loadArtworkFromMusic(for id: String, allowOnline: Bool = true) {
         MusicBridge.shared.fetchArtwork { [weak self] image in
             guard let self, self.track.id == id else { return }
             if let image {
                 self.setArtwork(image, for: id)
-            } else if self.onlineArtwork {
-                self.lookUpArtworkOnline(for: id)
+            } else if allowOnline && self.onlineArtwork {
+                self.lookUpArtworkOnline(for: id, thenFallBackToMusic: false)
             } else {
                 self.scheduleArtworkRetry(for: id)
             }
         }
     }
 
-    private func lookUpArtworkOnline(for id: String) {
+    private func lookUpArtworkOnline(for id: String, thenFallBackToMusic: Bool) {
         CatalogArtwork.shared.fetchArtwork(for: track) { [weak self] image in
             guard let self, self.track.id == id else { return }
             if let image {
                 self.setArtwork(image, for: id)
+            } else if thenFallBackToMusic {
+                // No confident catalogue match: a possibly-stale cover from
+                // Music still beats no cover at all.
+                self.loadArtworkFromMusic(for: id, allowOnline: false)
             } else {
                 self.scheduleArtworkRetry(for: id)
             }

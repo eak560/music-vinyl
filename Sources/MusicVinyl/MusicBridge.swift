@@ -19,6 +19,11 @@ struct Track: Equatable {
     var duration: Double = 0
     var position: Double = 0
     var id: String = ""
+    /// Apple Music streaming track (`class of current track` is `URL track`)
+    /// rather than something in the library. Music's own artwork for these is
+    /// unreliable — it reports none at all for some, and a stale cover from a
+    /// different release for others — so they are treated differently.
+    var isStreaming = false
 
     var isEmpty: Bool { title.isEmpty && artist.isEmpty }
 }
@@ -43,11 +48,11 @@ final class MusicBridge {
     private lazy var snapshotScript: NSAppleScript? = compile("""
     tell application id "com.apple.Music"
         set theState to (player state as text)
-        if theState is "stopped" then return {theState, "", "", "", 0, 0, ""}
+        if theState is "stopped" then return {theState, "", "", "", 0, 0, "", ""}
         set theTrack to current track
         return {theState, (name of theTrack as text), (artist of theTrack as text), ¬
                 (album of theTrack as text), (duration of theTrack), (player position), ¬
-                (persistent ID of theTrack as text)}
+                (persistent ID of theTrack as text), (class of theTrack as text)}
     end tell
     """)
 
@@ -93,7 +98,7 @@ final class MusicBridge {
         guard let result = snapshotScript?.executeAndReturnError(&error), error == nil else {
             return Snapshot(state: .notRunning)
         }
-        guard result.numberOfItems >= 7 else { return Snapshot(state: .stopped) }
+        guard result.numberOfItems >= 8 else { return Snapshot(state: .stopped) }
 
         func string(_ index: Int) -> String { result.atIndex(index)?.stringValue ?? "" }
         func number(_ index: Int) -> Double { result.atIndex(index)?.doubleValue ?? 0 }
@@ -114,6 +119,7 @@ final class MusicBridge {
         track.duration = number(5)
         track.position = number(6)
         track.id = string(7)
+        track.isStreaming = string(8).localizedCaseInsensitiveContains("URL track")
         if track.id.isEmpty { track.id = "\(track.title)|\(track.artist)|\(track.album)" }
 
         return Snapshot(state: state, track: track)

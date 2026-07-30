@@ -19,22 +19,28 @@ enum PreviewRender {
             print("artist: \(snapshot.track.artist)")
             print("album: \(snapshot.track.album)")
             print("position: \(snapshot.track.position) / \(snapshot.track.duration)")
+            print("streaming: \(snapshot.track.isStreaming)")
             func describe(_ image: NSImage?) -> String {
                 image.map { "\(Int($0.size.width))x\(Int($0.size.height))" } ?? "none"
             }
             // Report both sources so it is obvious which one is carrying a
             // given track.
+            // Report both sources unconditionally: which one the app would
+            // actually use depends on whether the track is streaming.
             var finished = false
             MusicBridge.shared.fetchArtwork { image in
                 print("artwork (local): \(describe(image))")
-                guard image == nil else {
-                    finished = true
-                    return
-                }
                 let start = Date()
                 CatalogArtwork.shared.fetchArtwork(for: snapshot.track) { online in
                     let ms = Date().timeIntervalSince(start) * 1000
                     print(String(format: "artwork (online): %@ in %.0f ms", describe(online), ms))
+                    if let online, let data = online.tiffRepresentation,
+                       let rep = NSBitmapImageRep(data: data),
+                       let png = rep.representation(using: .png, properties: [:]),
+                       let path = ProcessInfo.processInfo.environment["DUMP_ARTWORK"] {
+                        try? png.write(to: URL(fileURLWithPath: path))
+                        print("wrote online artwork to \(path)")
+                    }
                     finished = true
                 }
             }

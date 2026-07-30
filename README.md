@@ -114,15 +114,20 @@ another app's space and can't give it one of its own.
 
 ### Where the album art comes from
 
-Two sources, in order:
+Two sources, and which one leads depends on the track:
 
-1. **Music.app itself**, over AppleScript. Works for anything in your library.
-   No network.
-2. **Apple's public iTunes Search API**, only if step 1 came back empty.
+- **Library tracks** ask Music.app over AppleScript. Its artwork is
+  authoritative for these, and costs no network.
+- **Streaming tracks** (`class of current track` is `URL track`) go to
+  Apple's public iTunes Search API first, falling back to Music.
 
-Step 2 exists because Apple Music **streaming** tracks — `class of current
-track` is `URL track` — expose no artwork at all. `count of artworks` stays 0
-for the entire song, so there is nothing local to read.
+Music cannot be trusted for streaming artwork, in two distinct ways. For some
+tracks it reports none at all — `count of artworks` stays 0 for the whole
+song. For others it returns a cover from an entirely different release: on
+*Puddles* from **Melt**, `artwork 1 of current track` handed back the sleeve
+of another single by the same artist, at a confident 800×800. There is no way
+to tell a good one from a bad one locally, so the catalogue — whose result can
+be checked against the track's own title — leads for streaming.
 
 The obvious alternative, the private MediaRemote framework that the system's
 own now-playing UI uses, does not work here: since macOS 15.4 it answers only
@@ -133,9 +138,12 @@ implemented, confirmed dead, and removed.
 
 The lookup sends the artist and album of the playing track to
 `itunes.apple.com`. It is unauthenticated, uses an ephemeral URL session with
-cookies disabled, caches per track so a song is looked up once, and requires
-the title or artist to match before a cover is accepted — a wrong cover is
-worse than none. Turn it off with **Look Up Artwork Online** in the
+cookies disabled, and caches per track so a song is looked up once. A result
+is accepted only if its **title** matches, after normalising away case,
+accents, and qualifiers like "(Radio Edit)" or "- Single", and only with
+corroboration from the artist or album. Matching on artist alone would
+cheerfully accept a different song by the same act — a wrong cover is worse
+than none. Turn it off with **Look Up Artwork Online** in the
 right-click menu and the app never touches the network; streaming tracks then
 show a printed label with the title and artist instead.
 

@@ -79,23 +79,43 @@ final class CatalogArtwork {
         cache[id] = image
     }
 
+    /// Case, accents and qualifiers like "(Radio Edit)" or "- Single" vary
+    /// between what Music reports and what the catalogue lists; none of them
+    /// change which song it is.
+    private static func normalize(_ value: String) -> String {
+        var text = value.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+        text = text.replacingOccurrences(of: "\\([^)]*\\)", with: " ", options: .regularExpression)
+        text = text.replacingOccurrences(of: "\\[[^\\]]*\\]", with: " ", options: .regularExpression)
+        text = text.replacingOccurrences(of: "\\s-\\s(single|ep|deluxe|remaster).*$",
+                                         with: " ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: "\\bfeat\\.?\\s.*$",
+                                         with: " ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: "[^a-z0-9 ]", with: " ", options: .regularExpression)
+        text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return text.trimmingCharacters(in: .whitespaces)
+    }
+
     /// Picks the result that actually matches the playing song, rather than
     /// trusting the search ranking — a wrong cover is worse than none.
     private static func bestArtworkURL(in results: [[String: Any]], for track: Track) -> URL? {
         func matches(_ lhs: String?, _ rhs: String) -> Bool {
             guard let lhs, !rhs.isEmpty else { return false }
-            return lhs.compare(rhs, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+            return normalize(lhs) == normalize(rhs)
         }
 
-        let scored = results.map { result -> (Int, [String: Any]) in
+        // The title must match. Matching only the artist would happily accept a
+        // different song by the same act — which is exactly how a cover from
+        // elsewhere in the same album ends up on the record.
+        let titleMatches = results.filter { matches($0["trackName"] as? String, track.title) }
+
+        let scored = titleMatches.map { result -> (Int, [String: Any]) in
             var score = 0
-            if matches(result["trackName"] as? String, track.title) { score += 2 }
             if matches(result["artistName"] as? String, track.artist) { score += 2 }
-            if matches(result["collectionName"] as? String, track.album) { score += 1 }
+            if matches(result["collectionName"] as? String, track.album) { score += 2 }
             return (score, result)
         }
 
-        // Require the title or the artist to line up before using a cover.
+        // Still require corroboration from the artist or the album.
         guard let best = scored.max(by: { $0.0 < $1.0 }), best.0 >= 2,
               let raw = best.1["artworkUrl100"] as? String
         else { return nil }
