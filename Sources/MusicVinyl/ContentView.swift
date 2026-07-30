@@ -59,6 +59,16 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 0.35), value: model.glassBackground)
         .background(WindowConfigurator(alwaysOnTop: model.alwaysOnTop, isFullScreen: isFullScreen))
+        .onAppear {
+            // VINYL_FULLSCREEN_TEST exercises the real app's window, since the
+            // menu item can't be clicked from a script.
+            if ProcessInfo.processInfo.environment["VINYL_FULLSCREEN_TEST"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    WindowConfigurator.toggleFullScreen()
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 7) { exit(0) }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
             isFullScreen = true
         }
@@ -203,7 +213,26 @@ struct WindowConfigurator: NSViewRepresentable {
 
     /// Toggles the key window in or out of full screen.
     static func toggleFullScreen() {
-        (NSApp.keyWindow ?? NSApp.windows.first)?.toggleFullScreen(nil)
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first else {
+            Trace.log("toggleFullScreen: no window")
+            return
+        }
+        // SwiftUI finishes configuring the window after our NSViewRepresentable
+        // has run, and puts .fullScreenNone back. Since that flag is mutually
+        // exclusive with .fullScreenPrimary, the window would just refuse to
+        // toggle — so clear it here, immediately before it matters.
+        window.collectionBehavior.remove(.fullScreenNone)
+        window.collectionBehavior.insert(.fullScreenPrimary)
+        window.styleMask.insert(.resizable)
+
+        Trace.log("""
+        toggleFullScreen: primary=\(window.collectionBehavior.contains(.fullScreenPrimary)) \
+        none=\(window.collectionBehavior.contains(.fullScreenNone)) level=\(window.level.rawValue)
+        """)
+        window.toggleFullScreen(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            Trace.log("after toggle: fullScreen=\(window.styleMask.contains(.fullScreen)) frame=\(window.frame)")
+        }
     }
 
     private func configure(_ window: NSWindow?) {
@@ -227,8 +256,14 @@ struct WindowConfigurator: NSViewRepresentable {
         // transition, so drop back to normal level while full screen.
         let fullScreen = window.styleMask.contains(.fullScreen)
         window.level = (alwaysOnTop && !fullScreen) ? .floating : .normal
+        // SwiftUI marks this window .fullScreenNone, which is mutually
+        // exclusive with .fullScreenPrimary — inserting primary while none is
+        // still set is silently rejected, and the window simply refuses to go
+        // full screen. Clear it first.
+        //
         // fullScreenPrimary, not fullScreenAuxiliary: auxiliary only lets the
         // window ride along in another app's space, it can't have its own.
+        window.collectionBehavior.remove(.fullScreenNone)
         window.collectionBehavior.remove(.fullScreenAuxiliary)
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.styleMask.insert(.resizable)

@@ -108,9 +108,15 @@ is transparent, so a system material samples the desktop behind it and the
 look changes with the wallpaper. The field runs at 30fps — it is scenery, and
 a heavily blurred layer at 60fps is a waste of the GPU.
 
-Full screen needs `.fullScreenPrimary` in the window's collection behaviour;
-`.fullScreenAuxiliary`, which the window had, only lets it ride along in
-another app's space and can't give it one of its own.
+Full screen took two fixes. The window needs `.fullScreenPrimary` in its
+collection behaviour — `.fullScreenAuxiliary`, which it had, only lets it ride
+along in another app's space and can't give it one of its own. But SwiftUI
+also marks the window `.fullScreenNone`, which is *mutually exclusive* with
+`.fullScreenPrimary`: inserting primary while none is still set is silently
+rejected, and `toggleFullScreen(nil)` then does nothing at all, with no error.
+SwiftUI reapplies it after the `NSViewRepresentable` has run, so clearing it
+once at setup is not enough — it is cleared again immediately before each
+toggle.
 
 ### Where the album art comes from
 
@@ -162,6 +168,9 @@ checked without launching a window:
 - `--render-preview out.png` — render the record offscreen to a PNG.
   `PREVIEW_ANGLE`, `PREVIEW_PROGRESS`, `PREVIEW_NOART=1`, `PREVIEW_ARM=off`,
   `PREVIEW_ART=cover.jpg`, and `PREVIEW_GLASS=1` control the frame.
+- `VINYL_FULLSCREEN_TEST=1` — on launch, toggle full screen after 2s, log
+  whether the window actually entered it, and exit. The menu item cannot be
+  clicked from a script, and this is what caught the `.fullScreenNone` flag.
 - `--selftest` — drive the tonearm and scrub handlers against a live Music.app
   and report pass/fail, then restore the playback state it started with. The
   gestures need a mouse to exercise otherwise. `VINYL_TRACE=1` adds a

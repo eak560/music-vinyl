@@ -24,6 +24,9 @@ struct MusicVinylApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 360, height: 410)
+        // Without this the scene clamps to its content size and SwiftUI marks
+        // the window .fullScreenNone, blocking full screen outright.
+        .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("Playback") {
