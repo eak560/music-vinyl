@@ -47,6 +47,17 @@ enum PreviewRender {
             Pump.wait(timeout: 20) { finished }
             exit(0)
         }
+        // Mirrors ContentView's layout at an arbitrary size, to check that the
+        // background fills a wide window rather than just the record's column.
+        if let flag = args.firstIndex(of: "--render-layout") {
+            let path = args.count > flag + 1 ? args[flag + 1] : "layout.png"
+            let dims = (ProcessInfo.processInfo.environment["PREVIEW_SIZE"] ?? "1512x949")
+                .split(separator: "x").compactMap { Double($0) }
+            let size = CGSize(width: dims.first ?? 1512, height: dims.last ?? 949)
+            let art = ProcessInfo.processInfo.environment["PREVIEW_ART"]
+                .flatMap { NSImage(contentsOfFile: $0) }
+            renderLayout(to: path, size: size, art: art)
+        }
         if let flag = args.firstIndex(of: "--render-icon") {
             renderIcon(to: args.count > flag + 1 ? args[flag + 1] : "AppIcon.png")
         }
@@ -94,6 +105,37 @@ enum PreviewRender {
         }
         let rep = NSBitmapImageRep(cgImage: cg)
         guard let data = rep.representation(using: .png, properties: [:]) else { exit(1) }
+        try? data.write(to: URL(fileURLWithPath: path))
+        print("wrote \(path)")
+        exit(0)
+    }
+
+    @MainActor
+    private static func renderLayout(to path: String, size: CGSize, art: NSImage?) {
+        let palette = art.map { Palette.extract(from: $0) } ?? []
+        let scene = VStack(spacing: 10) {
+            Color.clear
+                .aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    ZStack {
+                        VinylView(artwork: art, angle: 20, title: "Midnight Ride", artist: "The Long Players")
+                        TonearmView(progress: 0.2, engaged: true, onTap: {})
+                    }
+                }
+                .padding(6)
+            Text("Midnight Ride").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            Capsule().fill(.white.opacity(0.18)).frame(width: 190, height: 46)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(GlassBackground(palette: palette, cornerRadius: 0))
+        .frame(width: size.width, height: size.height)
+
+        let renderer = ImageRenderer(content: scene)
+        renderer.scale = 1
+        guard let cg = renderer.cgImage,
+              let data = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])
+        else { exit(1) }
         try? data.write(to: URL(fileURLWithPath: path))
         print("wrote \(path)")
         exit(0)

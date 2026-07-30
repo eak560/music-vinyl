@@ -108,6 +108,11 @@ is transparent, so a system material samples the desktop behind it and the
 look changes with the wallpaper. The field runs at 30fps — it is scenery, and
 a heavily blurred layer at 60fps is a waste of the GPU.
 
+In full screen the record is height-limited, so the stack ends up only as
+wide as the disc — roughly 860pt on a 1512pt display. `.background` covers
+exactly the view it is attached to, so the colour field painted that column
+and left the rest of the screen bare; the container fills the window first.
+
 Full screen took two fixes. The window needs `.fullScreenPrimary` in its
 collection behaviour — `.fullScreenAuxiliary`, which it had, only lets it ride
 along in another app's space and can't give it one of its own. But SwiftUI
@@ -168,6 +173,9 @@ checked without launching a window:
 - `--render-preview out.png` — render the record offscreen to a PNG.
   `PREVIEW_ANGLE`, `PREVIEW_PROGRESS`, `PREVIEW_NOART=1`, `PREVIEW_ARM=off`,
   `PREVIEW_ART=cover.jpg`, and `PREVIEW_GLASS=1` control the frame.
+- `--render-layout out.png` — render the window layout at `PREVIEW_SIZE=WxH`.
+  Used to check that the background fills a wide window rather than just the
+  record's column.
 - `VINYL_FULLSCREEN_TEST=1` — on launch, toggle full screen after 2s, log
   whether the window actually entered it, and exit. The menu item cannot be
   clicked from a script, and this is what caught the `.fullScreenNone` flag.

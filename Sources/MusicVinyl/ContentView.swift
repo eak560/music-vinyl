@@ -48,6 +48,11 @@ struct ContentView: View {
                 .allowsHitTesting(controlsVisible)
         }
         .padding(isFullScreen ? 40 : 14)
+        // The record is square, so on a wide window the stack is only as wide
+        // as the disc — without this the background would paint that column
+        // and leave the rest of the screen bare. Fill the window, then draw
+        // behind it.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeOut(duration: 0.18), value: controlsVisible)
         .onHover { hovering = $0 }
         .contextMenu { menu }
