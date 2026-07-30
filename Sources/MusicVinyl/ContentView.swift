@@ -32,12 +32,17 @@ struct ContentView: View {
             GeometryReader { geo in
                 ZStack {
                     // TimelineView drives the spin; it idles when nothing is playing.
-                    TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !model.state.isPlaying)) { context in
+                    // Keeps running through a cover cross-fade even when the
+                    // record is stopped, or the blend would freeze part-way.
+                    TimelineView(.animation(minimumInterval: 1.0 / 60.0,
+                                            paused: !model.state.isPlaying && !model.isCrossFadingArtwork)) { context in
                         VinylView(
                             artwork: model.artwork,
                             angle: model.angle(at: context.date),
                             title: model.track.title,
-                            artist: model.track.artist
+                            artist: model.track.artist,
+                            previousArtwork: model.previousArtwork,
+                            artworkFade: model.artworkFade(at: context.date)
                         )
                     }
 

@@ -144,6 +144,10 @@ enum PreviewRender {
         // PREVIEW_ART points at a real cover file; otherwise a stand-in is drawn.
         let suppliedArt = ProcessInfo.processInfo.environment["PREVIEW_ART"]
             .flatMap { NSImage(contentsOfFile: $0) }
+        // PREVIEW_ART2 + PREVIEW_FADE show the cover cross-fade mid-blend.
+        let outgoingArt = ProcessInfo.processInfo.environment["PREVIEW_ART2"]
+            .flatMap { NSImage(contentsOfFile: $0) }
+        let fade = Double(ProcessInfo.processInfo.environment["PREVIEW_FADE"] ?? "") ?? 1
         // PREVIEW_ARM=off shows the tonearm swung clear, as when it is lifted.
         let armEngaged = ProcessInfo.processInfo.environment["PREVIEW_ARM"] != "off"
 
@@ -164,7 +168,9 @@ enum PreviewRender {
                     artwork: withArt ? (suppliedArt ?? sampleArtwork(side: 512)) : nil,
                     angle: angle,
                     title: "Midnight Ride",
-                    artist: "The Long Players"
+                    artist: "The Long Players",
+                    previousArtwork: outgoingArt,
+                    artworkFade: fade
                 )
                 TonearmView(progress: progress, engaged: armEngaged, onTap: {})
             }

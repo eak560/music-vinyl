@@ -8,6 +8,15 @@ final class NowPlayingModel: ObservableObject {
     @Published private(set) var state: PlayerState = .notRunning
     @Published private(set) var track = Track()
     @Published private(set) var artwork: NSImage?
+    /// The cover being faded out from. Kept alongside the current one so the
+    /// two can be blended rather than swapped.
+    @Published private(set) var previousArtwork: NSImage?
+    /// When the current cover took over, which the fade is derived from.
+    @Published private(set) var artworkChangedAt = Date.distantPast
+
+    /// Long and gentle: the change should register as the label settling, not
+    /// as a cut.
+    static let artworkFadeDuration: TimeInterval = 1.1
 
     /// Revolutions per minute of the turntable.
     @Published var rpm: Double = Defaults.double("rpm", 33.3333) {
@@ -204,6 +213,10 @@ final class NowPlayingModel: ObservableObject {
     /// Stores the cover and derives its palette off the main thread — the
     /// extraction walks a downsampled bitmap and would otherwise hitch the spin.
     private func setArtwork(_ image: NSImage?, for id: String?) {
+        if image !== artwork {
+            previousArtwork = artwork
+            artworkChangedAt = Date()
+        }
         artwork = image
         artworkTrackID = id
         guard let image else {
@@ -354,6 +367,23 @@ final class NowPlayingModel: ObservableObject {
         case .next: MusicBridge.shared.nextTrack(completion: acknowledged)
         case .previous: MusicBridge.shared.previousTrack(completion: acknowledged)
         }
+    }
+
+    /// How far the cover cross-fade has progressed, eased. Derived from the
+    /// clock rather than a SwiftUI animation: the label lives inside a
+    /// TimelineView that rebuilds every frame, which disrupts transitions.
+    func artworkFade(at date: Date) -> Double {
+        let elapsed = date.timeIntervalSince(artworkChangedAt)
+        guard elapsed < Self.artworkFadeDuration else { return 1 }
+        let t = max(0, elapsed / Self.artworkFadeDuration)
+        // Smoothstep, so it eases in and out instead of ramping linearly.
+        return t * t * (3 - 2 * t)
+    }
+
+    /// True while a cover change is still blending, so the view keeps drawing
+    /// even when the record itself is stopped.
+    var isCrossFadingArtwork: Bool {
+        Date().timeIntervalSince(artworkChangedAt) < Self.artworkFadeDuration
     }
 
     /// 0...1 through the current track, used to place the tonearm.

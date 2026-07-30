@@ -9,6 +9,9 @@ struct VinylView: View {
     let angle: Double
     let title: String
     let artist: String
+    /// The cover being replaced, and how far the blend between them has run.
+    var previousArtwork: NSImage? = nil
+    var artworkFade: Double = 1
 
     /// The platter takes up less than the full square so the tonearm pivot has
     /// somewhere to live outside the record.
@@ -34,9 +37,16 @@ struct VinylView: View {
                     .rotationEffect(.degrees(angle))
                     .blendMode(.screen)
 
-                LabelView(artwork: artwork, side: side, title: title, artist: artist)
-                    .frame(width: side * 0.34, height: side * 0.34)
-                    .rotationEffect(.degrees(angle))
+                LabelView(
+                    artwork: artwork,
+                    previousArtwork: previousArtwork,
+                    fade: artworkFade,
+                    side: side,
+                    title: title,
+                    artist: artist
+                )
+                .frame(width: side * 0.34, height: side * 0.34)
+                .rotationEffect(.degrees(angle))
 
                 // Fixed highlight from a light above-left, plus the spindle.
                 Circle()
@@ -121,24 +131,44 @@ private struct DiscBody: View, Equatable {
 }
 
 /// Center label: album art when Music has it, otherwise a printed paper label.
+///
+/// Draws the outgoing face underneath and the incoming one over it at `fade`
+/// opacity, which handles every combination — cover to cover, cover to printed
+/// label, and back — with one blend and no view identity games.
 private struct LabelView: View {
     let artwork: NSImage?
+    let previousArtwork: NSImage?
+    let fade: Double
     let side: CGFloat
     let title: String
     let artist: String
 
     var body: some View {
         ZStack {
-            if let artwork {
-                Image(nsImage: artwork)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    // Keyed on the image so a change swaps views rather than
-                    // mutating one in place — which is what lets the outgoing
-                    // and incoming covers overlap and cross-fade.
-                    .id(ObjectIdentifier(artwork))
-                    .transition(.opacity)
-            } else {
+            face(previousArtwork)
+            face(artwork).opacity(fade)
+        }
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(.black.opacity(0.45), lineWidth: max(0.5, side * 0.0035)))
+        .overlay(
+            // Spindle hole punched through the label.
+            Circle()
+                .fill(Color.black)
+                .frame(width: side * 0.026, height: side * 0.026)
+                .overlay(Circle().strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+        )
+        .shadow(color: .black.opacity(0.4), radius: side * 0.01)
+    }
+
+    /// One side of the blend: a cover if there is one, the printed label if not.
+    @ViewBuilder
+    private func face(_ image: NSImage?) -> some View {
+        if let image {
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        } else {
+            ZStack {
                 RadialGradient(
                     colors: [Color(red: 0.85, green: 0.78, blue: 0.65), Color(red: 0.62, green: 0.53, blue: 0.42)],
                     center: .center, startRadius: 0, endRadius: side * 0.22
@@ -162,17 +192,6 @@ private struct LabelView: View {
                     .padding(side * 0.02)
             }
         }
-        .animation(.easeInOut(duration: 0.4), value: artwork)
-        .clipShape(Circle())
-        .overlay(Circle().strokeBorder(.black.opacity(0.45), lineWidth: max(0.5, side * 0.0035)))
-        .overlay(
-            // Spindle hole punched through the label.
-            Circle()
-                .fill(Color.black)
-                .frame(width: side * 0.026, height: side * 0.026)
-                .overlay(Circle().strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
-        )
-        .shadow(color: .black.opacity(0.4), radius: side * 0.01)
     }
 }
 

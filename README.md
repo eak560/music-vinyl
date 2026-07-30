@@ -137,7 +137,8 @@ which reads as a flicker. Four things remove it:
 
 - The previous cover stays on the label until the new one resolves, or until
   every source has come back empty. Nothing blank in between.
-- The swap cross-fades rather than cutting.
+- The swap cross-fades over 1.1s on a smoothstep curve — long and gentle
+  enough to register as the label settling rather than as a cut.
 - Covers are memoised per **album**, not per track, so walking through a
   record fetches once and every track after it is free.
 - That cache is also written to disk, so a cover is fetched once ever rather
@@ -145,6 +146,16 @@ which reads as a flicker. Four things remove it:
 
 Measured: 387 ms cold, **11 ms** from the disk cache, **8 ms** for a different
 track from an album already seen.
+
+The blend is driven from the clock, not from a SwiftUI animation. The label
+lives inside a `TimelineView` that rebuilds every frame to spin the record,
+and that rebuilding disrupts transitions — an `.animation` with `.transition`
+on the image simply cut instead of fading. Instead the model records when the
+cover changed, the view derives the blend from elapsed time, and both faces
+are drawn at once: outgoing underneath, incoming over it at that opacity.
+That covers cover-to-cover, cover-to-printed-label and back with one path.
+The timeline keeps running through a blend even when playback is stopped, or
+it would freeze part-way.
 
 ### Where the album art comes from
 
@@ -201,7 +212,8 @@ checked without launching a window:
   answered, and how long the online lookup took, then exit.
 - `--render-preview out.png` — render the record offscreen to a PNG.
   `PREVIEW_ANGLE`, `PREVIEW_PROGRESS`, `PREVIEW_NOART=1`, `PREVIEW_ARM=off`,
-  `PREVIEW_ART=cover.jpg`, and `PREVIEW_GLASS=1` control the frame.
+  `PREVIEW_ART=cover.jpg`, `PREVIEW_GLASS=1`, and `PREVIEW_ART2` +
+  `PREVIEW_FADE=0.5` (to see the cover blend mid-way) control the frame.
 - `--render-layout out.png` — render the window layout at `PREVIEW_SIZE=WxH`.
   Used to check that the background fills a wide window rather than just the
   record's column.
