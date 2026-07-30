@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 
 /// Artwork source for Apple Music streaming tracks.
@@ -17,8 +18,19 @@ final class CatalogArtwork {
     /// Keyed by track id. `nil` marks a lookup that failed, so a track with no
     /// match is not re-requested on every retry tick.
     private var cache: [String: NSImage?] = [:]
+    /// Keyed by artist + album. Consecutive tracks from one album share a
+    /// cover, so the second onwards resolve with no network at all.
+    private var albumCache: [String: NSImage] = [:]
+    /// Survives relaunches, so a cover is fetched once ever rather than once
+    /// per session.
+    private let diskDirectory: URL
 
     private init() {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        diskDirectory = (caches ?? URL(fileURLWithPath: NSTemporaryDirectory()))
+            .appendingPathComponent("MusicVinyl/Artwork", isDirectory: true)
+        try? FileManager.default.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
+
         // Ephemeral: no cookie jar, no on-disk URL cache, nothing persisted.
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 8
@@ -39,12 +51,27 @@ final class CatalogArtwork {
         }
 
         let id = track.id
+        let album = Self.albumKey(for: track)
+
+        // An album already seen this session — the common case when a playlist
+        // walks through one record.
+        if let known = albumCache[album] {
+            finish(known, for: id, completion: completion)
+            return
+        }
+        // ...or seen in an earlier session.
+        if let data = try? Data(contentsOf: diskURL(for: album)), let image = NSImage(data: data) {
+            albumCache[album] = image
+            finish(image, for: id, completion: completion)
+            return
+        }
+
         // Pass 1: the track itself.
         search(term: "\(track.artist) \(track.title)",
                pick: { Self.trackMatch(in: $0, for: track) }) { [weak self] url in
             guard let self else { return }
             if let url {
-                self.download(url, for: id, completion: completion)
+                self.download(url, for: id, album: album, completion: completion)
                 return
             }
             // Pass 2: the album it came from. Apple's search index does not
@@ -62,7 +89,7 @@ final class CatalogArtwork {
                     self.finish(nil, for: id, completion: completion)
                     return
                 }
-                self.download(albumURL, for: id, completion: completion)
+                self.download(albumURL, for: id, album: album, completion: completion)
             }
         }
     }
@@ -96,11 +123,34 @@ final class CatalogArtwork {
         }.resume()
     }
 
-    private func download(_ url: URL, for id: String, completion: @escaping (NSImage?) -> Void) {
+    private func download(_ url: URL, for id: String, album: String,
+                          completion: @escaping (NSImage?) -> Void) {
         session.dataTask(with: url) { [weak self] data, _, _ in
             let image = data.flatMap(NSImage.init(data:))
-            DispatchQueue.main.async { self?.finish(image, for: id, completion: completion) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let image, let data {
+                    self.albumCache[album] = image
+                    // Store the bytes as delivered; re-encoding would be lossy
+                    // and slower for no gain.
+                    try? data.write(to: self.diskURL(for: album), options: .atomic)
+                }
+                self.finish(image, for: id, completion: completion)
+            }
         }.resume()
+    }
+
+    /// Covers are per album, not per track.
+    private static func albumKey(for track: Track) -> String {
+        let album = normalize(track.album)
+        let subject = album.isEmpty ? normalize(track.title) : album
+        return normalize(track.artist) + "|" + subject
+    }
+
+    private func diskURL(for albumKey: String) -> URL {
+        let digest = SHA256.hash(data: Data(albumKey.utf8))
+        let name = digest.map { String(format: "%02x", $0) }.joined()
+        return diskDirectory.appendingPathComponent(name)
     }
 
     private func finish(_ image: NSImage?, for id: String, completion: @escaping (NSImage?) -> Void) {

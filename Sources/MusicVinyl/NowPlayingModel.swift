@@ -139,9 +139,18 @@ final class NowPlayingModel: ObservableObject {
         }
 
         if track.id != previousID {
-            setArtwork(nil, for: nil)
+            // Deliberately *not* cleared here. Blanking the label the moment the
+            // track changes puts the printed fallback on screen for however long
+            // the lookup takes — up to a second on a streaming track — which
+            // reads as a flicker. The previous cover stays until the new one
+            // resolves, or until every source has failed (see scheduleArtworkRetry).
+            artworkTrackID = nil
             artworkAttempts = 0
-            if !track.id.isEmpty { loadArtwork(for: track.id) }
+            if track.id.isEmpty {
+                setArtwork(nil, for: nil)
+            } else {
+                loadArtwork(for: track.id)
+            }
         }
     }
 
@@ -211,6 +220,9 @@ final class NowPlayingModel: ObservableObject {
     }
 
     private func scheduleArtworkRetry(for id: String) {
+        // Every source has now come back empty for this track, so the cover
+        // still on screen belongs to the previous one. Let it go.
+        if artwork != nil && artworkTrackID == nil { setArtwork(nil, for: nil) }
         guard artworkAttempts < Self.maxArtworkAttempts else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.artworkRetryDelay) { [weak self] in
             guard let self, self.track.id == id, self.artwork == nil else { return }

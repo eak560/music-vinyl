@@ -129,6 +129,23 @@ SwiftUI reapplies it after the `NSViewRepresentable` has run, so clearing it
 once at setup is not enough — it is cleared again immediately before each
 toggle.
 
+### Keeping the label seamless across track changes
+
+Clearing the cover the moment the track changes puts the printed fallback on
+screen for as long as the lookup takes — up to a second on a streaming track —
+which reads as a flicker. Four things remove it:
+
+- The previous cover stays on the label until the new one resolves, or until
+  every source has come back empty. Nothing blank in between.
+- The swap cross-fades rather than cutting.
+- Covers are memoised per **album**, not per track, so walking through a
+  record fetches once and every track after it is free.
+- That cache is also written to disk, so a cover is fetched once ever rather
+  than once per launch.
+
+Measured: 387 ms cold, **11 ms** from the disk cache, **8 ms** for a different
+track from an album already seen.
+
 ### Where the album art comes from
 
 Two sources, and which one leads depends on the track:

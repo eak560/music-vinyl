@@ -133,6 +133,11 @@ private struct LabelView: View {
                 Image(nsImage: artwork)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
+                    // Keyed on the image so a change swaps views rather than
+                    // mutating one in place — which is what lets the outgoing
+                    // and incoming covers overlap and cross-fade.
+                    .id(ObjectIdentifier(artwork))
+                    .transition(.opacity)
             } else {
                 RadialGradient(
                     colors: [Color(red: 0.85, green: 0.78, blue: 0.65), Color(red: 0.62, green: 0.53, blue: 0.42)],
@@ -157,6 +162,7 @@ private struct LabelView: View {
                     .padding(side * 0.02)
             }
         }
+        .animation(.easeInOut(duration: 0.4), value: artwork)
         .clipShape(Circle())
         .overlay(Circle().strokeBorder(.black.opacity(0.45), lineWidth: max(0.5, side * 0.0035)))
         .overlay(
