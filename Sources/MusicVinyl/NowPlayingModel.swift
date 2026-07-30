@@ -28,9 +28,33 @@ final class NowPlayingModel: ObservableObject {
         didSet { Defaults.set(onlineArtwork, "onlineArtwork") }
     }
 
+    /// True when the user has lifted the tonearm off the record.
+    @Published private(set) var armLifted = false
+    /// True while the user is holding the record.
+    @Published private(set) var isScrubbing = false
+    /// Rotation contributed by dragging, on top of the free-running spin.
+    @Published private(set) var manualOffset: Double = 0
+
     private var timer: Timer?
     private var artworkTrackID: String?
     private var artworkAttempts = 0
+
+    /// Transport commands issued but not yet acknowledged by Music.
+    private var pendingCommands = 0
+
+    /// The state a just-issued command should produce. Music's `player state`
+    /// lags the command that caused it — measured at up to ~450ms — so an
+    /// acknowledgement is not proof the state has flipped yet. Snapshots that
+    /// disagree are ignored until one confirms, or until the deadline passes
+    /// and reality wins (in case the command simply didn't take).
+    private var expectedState: PlayerState?
+    private var expectationDeadline = Date.distantPast
+    private static let expectationTimeout: TimeInterval = 1.5
+    private var resumeAfterScrub = false
+    private var scrubStartPosition: Double = 0
+    private var scrubDegrees: Double = 0
+    private var seekInFlight = false
+    private var pendingSeek: Double?
 
     // Rotation is derived from wall-clock time rather than accumulated per
     // frame, so it stays smooth and survives dropped frames. Pausing freezes
@@ -68,6 +92,12 @@ final class NowPlayingModel: ObservableObject {
     }
 
     func refresh() {
+        // While scrubbing, every seek makes Music post a playerInfo
+        // notification, and each of those would queue a snapshot read on the
+        // same serial queue the seeks use — measured at ~700ms of backlog,
+        // which the user feels as the record lagging their hand. The polls
+        // would be discarded anyway, so don't issue them.
+        guard !isScrubbing else { return }
         MusicBridge.shared.fetchSnapshot { [weak self] snapshot in
             guard let self else { return }
             self.apply(snapshot)
@@ -75,11 +105,29 @@ final class NowPlayingModel: ObservableObject {
     }
 
     private func apply(_ snapshot: Snapshot) {
+        // Don't let a stale poll fight an optimistic transport update, and
+        // don't let position polling stutter the record mid-drag.
+        var blocked = pendingCommands > 0 || isScrubbing
+        if !blocked, let expected = expectedState {
+            if snapshot.state == expected {
+                expectedState = nil
+            } else if Date() < expectationDeadline {
+                blocked = true
+            } else {
+                expectedState = nil
+            }
+        }
+        Trace.log("apply(\(snapshot.state.rawValue)) blocked=\(blocked) state=\(state.rawValue) armLifted=\(armLifted) expect=\(expectedState?.rawValue ?? "-")")
+        guard !blocked else { return }
+
         let wasPlaying = state.isPlaying
         let previousID = track.id
 
         state = snapshot.state
         track = snapshot.track
+
+        // Playback starting from anywhere means the needle is down.
+        if state.isPlaying { armLifted = false }
 
         if wasPlaying != state.isPlaying {
             setSpinning(state.isPlaying)
@@ -159,8 +207,112 @@ final class NowPlayingModel: ObservableObject {
     private var degreesPerSecond: Double { rpm * 360.0 / 60.0 }
 
     func angle(at date: Date) -> Double {
-        guard let start = spinStart else { return spinBaseAngle }
-        return spinBaseAngle + date.timeIntervalSince(start) * degreesPerSecond
+        guard let start = spinStart else { return spinBaseAngle + manualOffset }
+        return spinBaseAngle + date.timeIntervalSince(start) * degreesPerSecond + manualOffset
+    }
+
+    /// Seconds of audio per full revolution — 1.8 s at 33⅓ RPM, exactly as on a
+    /// real turntable, so a half turn of the record scrubs half a rotation's
+    /// worth of the song.
+    private var secondsPerRevolution: Double { 60.0 / rpm }
+
+    // MARK: - Direct manipulation
+
+    /// Lifts the needle off the record (stopping playback) or drops it back on.
+    func toggleArm() {
+        if armLifted {
+            armLifted = false
+            if state != .playing { issue(.play, optimistic: .playing) }
+        } else {
+            armLifted = true
+            if state.isPlaying { issue(.pause, optimistic: .paused) }
+        }
+    }
+
+    /// The user has grabbed the record; stop playback the way a hand on a
+    /// spinning disc would.
+    func beginScrub() {
+        guard state == .playing || state == .paused else { return }
+        isScrubbing = true
+        resumeAfterScrub = state.isPlaying
+        scrubStartPosition = track.position
+        scrubDegrees = 0
+        if state.isPlaying { issue(.pause, optimistic: .paused) }
+    }
+
+    /// Rotate the record by hand, dragging the playback position with it.
+    func updateScrub(deltaDegrees: Double) {
+        guard isScrubbing else { return }
+        manualOffset += deltaDegrees
+        scrubDegrees += deltaDegrees
+
+        guard track.duration > 0 else { return }
+        let target = scrubStartPosition + (scrubDegrees / 360.0) * secondsPerRevolution
+        requestSeek(min(max(target, 0), max(track.duration - 0.1, 0)))
+    }
+
+    /// Let go: playback resumes from wherever the record was left.
+    func endScrub() {
+        guard isScrubbing else { return }
+        isScrubbing = false
+        if resumeAfterScrub && !armLifted { issue(.play, optimistic: .playing) }
+        // Fold the hand-rotation into the spin so the label doesn't jump.
+        spinBaseAngle += manualOffset
+        manualOffset = 0
+        if spinStart != nil { spinStart = Date() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.refresh() }
+    }
+
+    /// Coalescing seek: keeps one request in flight and always sends the most
+    /// recent target, so fast dragging never backs up behind stale positions.
+    private func requestSeek(_ seconds: Double) {
+        pendingSeek = seconds
+        track.position = seconds
+        flushSeek()
+    }
+
+    private func flushSeek() {
+        guard !seekInFlight, let target = pendingSeek else { return }
+        pendingSeek = nil
+        seekInFlight = true
+        Trace.log(String(format: "seek -> %.2f", target))
+        MusicBridge.shared.seek(to: target) { [weak self] in
+            guard let self else { return }
+            Trace.log("seek done")
+            self.seekInFlight = false
+            self.flushSeek()
+        }
+    }
+
+    private enum Transport { case play, pause, playPause, next, previous }
+
+    /// Sends a transport command, shows its effect immediately, and ignores
+    /// polling until Music confirms — then re-reads the truth.
+    private func issue(_ transport: Transport, optimistic: PlayerState?) {
+        Trace.log("issue(\(transport)) optimistic=\(optimistic?.rawValue ?? "-") armLifted=\(armLifted)")
+        pendingCommands += 1
+        if let optimistic {
+            state = optimistic
+            setSpinning(optimistic.isPlaying)
+            expectedState = optimistic
+            expectationDeadline = Date().addingTimeInterval(Self.expectationTimeout)
+        }
+        let acknowledged: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.pendingCommands -= 1
+            guard self.pendingCommands == 0 else { return }
+            self.refresh()
+            // Music's state can take a moment to catch up; look again shortly so
+            // the expectation resolves without waiting for the next poll tick.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.refresh() }
+        }
+        switch transport {
+        case .play: MusicBridge.shared.play(completion: acknowledged)
+        case .pause: MusicBridge.shared.pause(completion: acknowledged)
+        case .playPause: MusicBridge.shared.playPause(completion: acknowledged)
+        case .next: MusicBridge.shared.nextTrack(completion: acknowledged)
+        case .previous: MusicBridge.shared.previousTrack(completion: acknowledged)
+        }
     }
 
     /// 0...1 through the current track, used to place the tonearm.
@@ -172,17 +324,11 @@ final class NowPlayingModel: ObservableObject {
     // MARK: - Transport
 
     func playPause() {
-        MusicBridge.shared.playPause()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.refresh() }
+        if !state.isPlaying { armLifted = false }
+        issue(.playPause, optimistic: state.isPlaying ? .paused : .playing)
     }
 
-    func next() {
-        MusicBridge.shared.nextTrack()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.refresh() }
-    }
+    func next() { issue(.next, optimistic: nil) }
 
-    func previous() {
-        MusicBridge.shared.previousTrack()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.refresh() }
-    }
+    func previous() { issue(.previous, optimistic: nil) }
 }

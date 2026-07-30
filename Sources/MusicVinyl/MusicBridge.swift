@@ -83,11 +83,10 @@ final class MusicBridge {
         }
     }
 
-    /// Blocking variant used by the `--dump-state` development flag.
-    func snapshotSynchronously() -> Snapshot {
-        guard isMusicRunning else { return Snapshot(state: .notRunning) }
-        return queue.sync { readSnapshot() }
-    }
+    // Deliberately no synchronous snapshot API: blocking the main thread on
+    // this queue deadlocks, because the AppleScript running on it needs the
+    // main run loop to deliver its Apple Event reply. Callers that need a
+    // blocking read should pump the run loop instead — see `Pump`.
 
     private func readSnapshot() -> Snapshot {
         var error: NSDictionary?
@@ -138,18 +137,51 @@ final class MusicBridge {
 
     // MARK: - Transport
 
-    private func perform(_ command: String) {
-        guard isMusicRunning else { return }
+    /// Runs a transport command, reporting back on the main queue once Music has
+    /// processed it. Commands and snapshot reads share one serial queue, so a
+    /// snapshot that was already queued behind an older state is guaranteed to
+    /// be delivered *before* this completion — which is what lets the caller
+    /// tell stale readings from fresh ones.
+    private func perform(_ command: String, completion: (() -> Void)? = nil) {
+        guard isMusicRunning else {
+            if let completion { DispatchQueue.main.async(execute: completion) }
+            return
+        }
         queue.async {
             var error: NSDictionary?
             NSAppleScript(source: "tell application id \"com.apple.Music\" to \(command)")?
                 .executeAndReturnError(&error)
+            if let completion { DispatchQueue.main.async(execute: completion) }
         }
     }
 
-    func playPause() { perform("playpause") }
-    func nextTrack() { perform("next track") }
-    func previousTrack() { perform("back track") }
+    func playPause(completion: (() -> Void)? = nil) { perform("playpause", completion: completion) }
+    func nextTrack(completion: (() -> Void)? = nil) { perform("next track", completion: completion) }
+    func previousTrack(completion: (() -> Void)? = nil) { perform("back track", completion: completion) }
+
+    // Explicit play/pause rather than `playpause`, so the gesture handlers can
+    // state what they want instead of toggling whatever Music happens to be in.
+    func play(completion: (() -> Void)? = nil) { perform("play", completion: completion) }
+    func pause(completion: (() -> Void)? = nil) { perform("pause", completion: completion) }
+
+    /// Seeks, then reports back on the main queue. The completion lets the
+    /// caller keep exactly one seek in flight while scrubbing, instead of
+    /// piling requests onto the queue faster than Music can service them.
+    func seek(to seconds: Double, completion: @escaping () -> Void) {
+        guard isMusicRunning else {
+            DispatchQueue.main.async(execute: completion)
+            return
+        }
+        queue.async {
+            Trace.log(String(format: "bridge.seek enter %.2f", seconds))
+            var error: NSDictionary?
+            NSAppleScript(source: """
+            tell application id "com.apple.Music" to set player position to \(seconds)
+            """)?.executeAndReturnError(&error)
+            Trace.log("bridge.seek done err=\(error?["NSAppleScriptErrorNumber"] ?? "none")")
+            DispatchQueue.main.async(execute: completion)
+        }
+    }
 
     func activateMusic() {
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID).first else { return }

@@ -7,8 +7,13 @@ enum PreviewRender {
     @MainActor
     static func runIfRequested() {
         let args = CommandLine.arguments
+        if args.contains("--selftest") { SelfTest.run() }
+
         if args.contains("--dump-state") {
-            let snapshot = MusicBridge.shared.snapshotSynchronously()
+            var read: Snapshot?
+            MusicBridge.shared.fetchSnapshot { read = $0 }
+            Pump.wait(timeout: 5) { read != nil }
+            let snapshot = read ?? Snapshot(state: .notRunning)
             print("state: \(snapshot.state.rawValue)")
             print("title: \(snapshot.track.title)")
             print("artist: \(snapshot.track.artist)")
@@ -19,25 +24,21 @@ enum PreviewRender {
             }
             // Report both sources so it is obvious which one is carrying a
             // given track.
-            let semaphore = DispatchSemaphore(value: 0)
+            var finished = false
             MusicBridge.shared.fetchArtwork { image in
                 print("artwork (local): \(describe(image))")
                 guard image == nil else {
-                    semaphore.signal()
+                    finished = true
                     return
                 }
                 let start = Date()
                 CatalogArtwork.shared.fetchArtwork(for: snapshot.track) { online in
                     let ms = Date().timeIntervalSince(start) * 1000
                     print(String(format: "artwork (online): %@ in %.0f ms", describe(online), ms))
-                    semaphore.signal()
+                    finished = true
                 }
             }
-            // The callback hops back to the main queue, which is this thread —
-            // pump the run loop until it lands.
-            while semaphore.wait(timeout: .now()) == .timedOut {
-                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
-            }
+            Pump.wait(timeout: 20) { finished }
             exit(0)
         }
         if let flag = args.firstIndex(of: "--render-icon") {
@@ -51,6 +52,8 @@ enum PreviewRender {
         // PREVIEW_ART points at a real cover file; otherwise a stand-in is drawn.
         let suppliedArt = ProcessInfo.processInfo.environment["PREVIEW_ART"]
             .flatMap { NSImage(contentsOfFile: $0) }
+        // PREVIEW_ARM=off shows the tonearm swung clear, as when it is lifted.
+        let armEngaged = ProcessInfo.processInfo.environment["PREVIEW_ARM"] != "off"
 
         let side: CGFloat = 720
         let scene = ZStack {
@@ -62,7 +65,7 @@ enum PreviewRender {
                     title: "Midnight Ride",
                     artist: "The Long Players"
                 )
-                TonearmView(progress: progress, engaged: true)
+                TonearmView(progress: progress, engaged: armEngaged, onTap: {})
             }
             .padding(20)
         }
@@ -87,7 +90,7 @@ enum PreviewRender {
         let side: CGFloat = 1024
         let scene = ZStack {
             VinylView(artwork: sampleArtwork(side: 512), angle: -18, title: "", artist: "")
-            TonearmView(progress: 0.12, engaged: true)
+            TonearmView(progress: 0.12, engaged: true, onTap: {})
         }
         .frame(width: side, height: side)
         .padding(side * 0.06)

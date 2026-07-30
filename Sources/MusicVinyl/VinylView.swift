@@ -170,12 +170,14 @@ private struct LabelView: View {
     }
 }
 
-/// A stylized tonearm that tracks inward as the song progresses.
+/// A stylized tonearm that tracks inward as the song progresses. Clicking it
+/// lifts the needle off the record, or drops it back on.
 struct TonearmView: View {
     /// 0...1 through the current track.
     let progress: Double
     /// When false the arm swings back to its rest position.
     let engaged: Bool
+    let onTap: () -> Void
 
     // Pivot sits just off the top-right corner of the platter. The angles below
     // are tuned against `VinylView.discScale` so the stylus lands on the
@@ -217,6 +219,11 @@ struct TonearmView: View {
                             .frame(width: side * 0.070, height: side * 0.036)
                             .offset(x: -side * 0.020)
                     }
+                    // Widen the hit area well past the visual thickness — the
+                    // arm is only a few points tall but needs to be clickable.
+                    .padding(.vertical, side * 0.022)
+                    .contentShape(Capsule())
+                    .onTapGesture(perform: onTap)
                     .position(x: pivot.x - armLength / 2, y: pivot.y)
 
                 // Counterweight behind the pivot.
@@ -248,6 +255,5 @@ struct TonearmView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .aspectRatio(1, contentMode: .fit)
-        .allowsHitTesting(false)
     }
 }

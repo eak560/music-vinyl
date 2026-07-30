@@ -16,7 +16,14 @@ reads the current track. Deny it and the record will just sit still.
 
 ## Using it
 
-- **Drag anywhere** on the window to move it. There is no title bar.
+- **Click the tonearm** to lift the needle off the record. Playback stops and
+  the arm swings back to its rest. Click it again to drop it and resume.
+- **Hold the record** to stop it, exactly like putting a hand on a spinning
+  disc. Playback resumes when you let go.
+- **Turn the record while holding it** to scrub. The playback position follows
+  the rotation at the real ratio — one full turn is 1.8 s of audio at 33⅓ RPM
+  — so you can rock it back and forth to hunt for a spot.
+- **Drag the window background** to move it. There is no title bar.
 - **Hover** over the record for play/pause and skip buttons.
 - **Right-click** for always-on-top, track info, online artwork lookup, and
   turntable speed (33⅓ / 45 / 78 RPM — 33⅓ is the real speed, and it is fast).
@@ -40,6 +47,34 @@ the tonearm) in sync.
 Rotation is computed from elapsed wall-clock time rather than accumulated per
 frame, so pausing freezes the label exactly where it was and dropped frames
 never make the record drift.
+
+### Direct manipulation, and what it can't do
+
+Grabbing the record pauses Music and turns the disc by hand, mapping rotation
+onto `player position`. Measured round-trips to Music: `pause` 17–22 ms,
+`play` ~84 ms, a seek ~37 ms — about 27 position updates a second, which is
+enough for the record to track your hand.
+
+**It is not real scratching, and it cannot be.** A turntablist's scratch is
+the record's own audio played back at a varying rate and direction. Nothing
+here has access to Music's audio stream — the app can only ask Music to jump
+to a timestamp. So dragging repositions the song; it does not pitch-bend or
+reverse it. Music stays paused while you hold the record, which is why
+scrubbing is silent rather than a stutter of half-buffered fragments.
+
+Two behaviours of Music.app shaped this code, both measured:
+
+- **Its state lags its commands.** 400 ms after a `pause` was acknowledged,
+  `player state` still read `playing`, then flipped 67 ms later. So an
+  acknowledgement is not proof; the model holds an *expected* state and
+  ignores snapshots that disagree until one confirms or 1.5 s passes.
+- **Its notifications can drown the seeks.** Every seek makes Music post
+  `playerInfo`, and each of those queued a snapshot read on the same serial
+  Apple-event queue, backing seeks up by ~700 ms. Polling is suspended for
+  the duration of a drag.
+
+Seeks are coalesced — one in flight, always the newest target — so a fast
+drag never queues stale positions behind itself.
 
 ### Where the album art comes from
 
@@ -81,8 +116,17 @@ checked without launching a window:
 - `--dump-state` — print what Music currently reports, which artwork source
   answered, and how long the online lookup took, then exit.
 - `--render-preview out.png` — render the record offscreen to a PNG.
-  `PREVIEW_ANGLE`, `PREVIEW_PROGRESS`, `PREVIEW_NOART=1`, and
-  `PREVIEW_ART=cover.jpg` control the frame.
+  `PREVIEW_ANGLE`, `PREVIEW_PROGRESS`, `PREVIEW_NOART=1`, `PREVIEW_ARM=off`,
+  and `PREVIEW_ART=cover.jpg` control the frame.
+- `--selftest` — drive the tonearm and scrub handlers against a live Music.app
+  and report pass/fail, then restore the playback state it started with. The
+  gestures need a mouse to exercise otherwise. `VINYL_TRACE=1` adds a
+  transition log, which is how both Music quirks above were found.
+
+Note for anyone extending `MusicBridge`: never block the main thread waiting on
+its serial queue. `NSAppleScript` needs the main run loop to deliver its Apple
+Event reply, so a `queue.sync` from the main thread deadlocks — verified with a
+stack sample. Use the async API, or `Pump` if you need to wait.
 
 `./make-icon.sh` regenerates `Resources/AppIcon.icns` from the same SwiftUI
 code that draws the record.

@@ -4,27 +4,39 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var model: NowPlayingModel
     @State private var hovering = false
+    /// Last pointer angle during a drag, in degrees; nil when not dragging.
+    @State private var dragAngle: Double?
 
     var body: some View {
         VStack(spacing: 10) {
-            ZStack {
-                // TimelineView drives the spin; it idles when nothing is playing.
-                TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !model.state.isPlaying)) { context in
-                    VinylView(
-                        artwork: model.artwork,
-                        angle: model.angle(at: context.date),
-                        title: model.track.title,
-                        artist: model.track.artist
+            GeometryReader { geo in
+                ZStack {
+                    // TimelineView drives the spin; it idles when nothing is playing.
+                    TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !model.state.isPlaying)) { context in
+                        VinylView(
+                            artwork: model.artwork,
+                            angle: model.angle(at: context.date),
+                            title: model.track.title,
+                            artist: model.track.artist
+                        )
+                    }
+
+                    TonearmView(
+                        progress: model.progress,
+                        engaged: armEngaged,
+                        onTap: { model.toggleArm() }
                     )
-                }
 
-                TonearmView(progress: model.progress, engaged: model.state != .stopped && model.state != .notRunning)
-
-                if hovering {
-                    TransportControls()
-                        .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                    if hovering && !model.isScrubbing {
+                        TransportControls()
+                            .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                    }
                 }
+                // Only the record itself responds to grabbing.
+                .contentShape(Circle())
+                .gesture(discDrag(in: geo.size))
             }
+            .aspectRatio(1, contentMode: .fit)
             .padding(6)
 
             if model.showTrackInfo {
@@ -36,6 +48,44 @@ struct ContentView: View {
         .onHover { hovering = $0 }
         .contextMenu { menu }
         .background(WindowConfigurator(alwaysOnTop: model.alwaysOnTop))
+    }
+
+    private var armEngaged: Bool {
+        !model.armLifted && model.state != .stopped && model.state != .notRunning
+    }
+
+    /// Grabbing the record stops playback and turns it by hand; the playback
+    /// position follows the rotation, so dragging back and forth scrubs.
+    private func discDrag(in size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onChanged { value in
+                let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                let radius = min(size.width, size.height) / 2 * VinylView.discScale
+
+                if dragAngle == nil {
+                    // Ignore presses that land outside the disc.
+                    guard hypot(value.startLocation.x - center.x,
+                                value.startLocation.y - center.y) <= radius else { return }
+                    dragAngle = Self.angle(of: value.startLocation, around: center)
+                    model.beginScrub()
+                }
+
+                guard let previous = dragAngle else { return }
+                let current = Self.angle(of: value.location, around: center)
+                var delta = current - previous
+                // Unwrap across the ±180° seam.
+                if delta > 180 { delta -= 360 } else if delta < -180 { delta += 360 }
+                dragAngle = current
+                model.updateScrub(deltaDegrees: delta)
+            }
+            .onEnded { _ in
+                if dragAngle != nil { model.endScrub() }
+                dragAngle = nil
+            }
+    }
+
+    private static func angle(of point: CGPoint, around center: CGPoint) -> Double {
+        atan2(point.y - center.y, point.x - center.x) * 180 / .pi
     }
 
     private var trackInfo: some View {
