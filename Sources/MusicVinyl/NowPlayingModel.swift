@@ -25,6 +25,7 @@ final class NowPlayingModel: ObservableObject {
 
     private var timer: Timer?
     private var artworkTrackID: String?
+    private var artworkAttempts = 0
 
     // Rotation is derived from wall-clock time rather than accumulated per
     // frame, so it stays smooth and survives dropped frames. Pausing freezes
@@ -82,20 +83,32 @@ final class NowPlayingModel: ObservableObject {
         }
 
         if track.id != previousID {
-            if track.id.isEmpty {
-                artwork = nil
-                artworkTrackID = nil
-            } else if track.id != artworkTrackID {
-                loadArtwork(for: track.id)
-            }
+            artwork = nil
+            artworkTrackID = nil
+            artworkAttempts = 0
+            if !track.id.isEmpty { loadArtwork(for: track.id) }
         }
     }
 
+    /// Music reports `count of artworks = 0` for a while on streaming tracks —
+    /// the art is filled in only once it has been fetched. Retry a few times
+    /// before settling for the printed-label fallback.
+    private static let maxArtworkAttempts = 6
+    private static let artworkRetryDelay: TimeInterval = 2
+
     private func loadArtwork(for id: String) {
+        artworkAttempts += 1
         MusicBridge.shared.fetchArtwork { [weak self] image in
             guard let self, self.track.id == id else { return }
-            self.artworkTrackID = id
-            self.artwork = image
+            if let image {
+                self.artwork = image
+                self.artworkTrackID = id
+            } else if self.artworkAttempts < Self.maxArtworkAttempts {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.artworkRetryDelay) { [weak self] in
+                    guard let self, self.track.id == id, self.artwork == nil else { return }
+                    self.loadArtwork(for: id)
+                }
+            }
         }
     }
 
