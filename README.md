@@ -31,6 +31,9 @@ reads the current track. Deny it and the record will just sit still.
   speed, and it is fast).
 - **Glass Background** swaps the transparent window for a slow field of
   colour pulled from the current cover, under a frosted pane. Off by default.
+- **Full screen** with ⌃⌘F, or from the right-click menu. The record scales
+  up, the glass background squares off its corners, and always-on-top steps
+  aside for the duration.
 - **Quit** with ⌘Q, or from the right-click menu. The close button is hidden.
 - Drag a window corner to resize; the record scales with it.
 
@@ -93,10 +96,21 @@ Album art skews dark, and a background built straight from those values comes
 out near-black — the first attempt was almost invisible. Each tint is lifted
 to a usable brightness and its saturation reined in, keeping only the hue.
 
+The fluid feel comes from three things layered together: each colour is drawn
+as two lobes on mismatched orbits, so they merge and pull apart instead of
+sliding as one rigid blob; the whole field turns very slowly; and the wave
+bands are domain-warped — their phase modulated by a second, slower wave —
+which breaks up the regularity that gives a plain sine away. Every period is
+incommensurate with the others, so the motion never visibly loops.
+
 The frosted pane is hand-rolled rather than `.ultraThinMaterial`: the window
 is transparent, so a system material samples the desktop behind it and the
-look changes with the wallpaper. The field runs at 24fps — it is scenery, and
+look changes with the wallpaper. The field runs at 30fps — it is scenery, and
 a heavily blurred layer at 60fps is a waste of the GPU.
+
+Full screen needs `.fullScreenPrimary` in the window's collection behaviour;
+`.fullScreenAuxiliary`, which the window had, only lets it ride along in
+another app's space and can't give it one of its own.
 
 ### Where the album art comes from
 

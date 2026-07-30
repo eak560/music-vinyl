@@ -39,6 +39,10 @@ struct MusicVinylApp: App {
                 Toggle("Glass Background", isOn: $model.glassBackground)
                 Toggle("Look Up Artwork Online", isOn: $model.onlineArtwork)
             }
+            CommandGroup(after: .windowArrangement) {
+                Button("Enter Full Screen") { WindowConfigurator.toggleFullScreen() }
+                    .keyboardShortcut("f", modifiers: [.control, .command])
+            }
         }
     }
 }

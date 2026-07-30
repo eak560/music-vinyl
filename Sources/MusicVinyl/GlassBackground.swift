@@ -2,11 +2,20 @@ import SwiftUI
 
 /// A slow, blurred colour field drawn from the cover art, behind a frosted pane.
 ///
-/// Everything drifts on incommensurate periods so the motion never visibly
-/// loops, and the whole thing runs at 24fps — it is scenery, and a heavily
-/// blurred layer at 60fps is a waste of the GPU.
+/// The fluid feel comes from three things layered together: each colour is two
+/// lobes drifting at different rates, so they merge and pull apart like liquid
+/// rather than sliding as one rigid blob; the whole field turns very slowly;
+/// and the wave bands are domain-warped — their phase is itself modulated by a
+/// slower wave — which breaks up the tell-tale regularity of a plain sine.
+///
+/// Every period is incommensurate with the others, so the motion never visibly
+/// loops. It runs at 30fps: it is scenery, and a heavily blurred layer at 60fps
+/// is a waste of the GPU.
 struct GlassBackground: View {
     let palette: [Color]
+    /// Squared off in full screen, where rounded corners would just frame the
+    /// display in black.
+    var cornerRadius: CGFloat = 24
 
     private var colors: [Color] {
         palette.isEmpty
@@ -15,15 +24,12 @@ struct GlassBackground: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
             let time = context.date.timeIntervalSinceReferenceDate
             GeometryReader { geo in
                 let size = geo.size
                 ZStack {
-                    // A deep tint of the album's own colour, rather than grey,
-                    // so the field reads as coloured even where blobs thin out.
                     base
-
                     blobs(time: time, size: size)
                     waves(time: time, size: size)
                 }
@@ -40,57 +46,12 @@ struct GlassBackground: View {
                 startPoint: .top, endPoint: .bottom
             )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(.white.opacity(cornerRadius > 0 ? 0.12 : 0), lineWidth: 1)
         )
         .drawingGroup()
-    }
-
-    /// Where a given blob sits, and how wide its falloff is, at this instant.
-    private struct BlobFrame {
-        var color: Color
-        var offset: CGSize
-        var radius: CGFloat
-    }
-
-    private func blobFrames(time: TimeInterval, size: CGSize) -> [BlobFrame] {
-        let diagonal: CGFloat = max(size.width, size.height)
-        return colors.prefix(5).enumerated().map { index, color in
-            let i = Double(index)
-            let xDrift: Double = sin(time * (0.045 + i * 0.011) + i * 1.7)
-            let yDrift: Double = cos(time * (0.037 + i * 0.013) + i * 2.3)
-            let breathe: Double = 1.0 + 0.14 * sin(time * (0.05 + i * 0.017) + i)
-            return BlobFrame(
-                color: color,
-                offset: CGSize(width: CGFloat(xDrift) * size.width * 0.32,
-                               height: CGFloat(yDrift) * size.height * 0.30),
-                radius: diagonal * 0.34 * CGFloat(breathe)
-            )
-        }
-    }
-
-    /// Soft colour clouds drifting on lissajous paths.
-    private func blobs(time: TimeInterval, size: CGSize) -> some View {
-        let diagonal: CGFloat = max(size.width, size.height)
-        let frames: [BlobFrame] = blobFrames(time: time, size: size)
-        return ZStack {
-            ForEach(Array(frames.enumerated()), id: \.offset) { _, frame in
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [frame.color.opacity(0.85), frame.color.opacity(0.0)],
-                            center: .center, startRadius: 0, endRadius: frame.radius
-                        )
-                    )
-                    .frame(width: diagonal * 0.9, height: diagonal * 0.9)
-                    .offset(frame.offset)
-                    .blendMode(.plusLighter)
-            }
-        }
-        .blur(radius: diagonal * 0.055)
-        .opacity(0.9)
     }
 
     /// Deep, desaturated wash of the leading tint.
@@ -103,23 +64,97 @@ struct GlassBackground: View {
         .background(Color(white: 0.06))
     }
 
-    /// Two lazy sine bands, for the sense of something moving under the glass.
+    /// Where a given lobe sits, and how wide its falloff is, at this instant.
+    private struct Lobe {
+        var color: Color
+        var offset: CGSize
+        var radius: CGFloat
+        var opacity: Double
+    }
+
+    private func lobes(time: TimeInterval, size: CGSize) -> [Lobe] {
+        let diagonal: CGFloat = max(size.width, size.height)
+        var result: [Lobe] = []
+
+        for (index, color) in colors.prefix(5).enumerated() {
+            let i = Double(index)
+            // Two lobes of the same colour, on deliberately mismatched orbits.
+            for lobe in 0..<2 {
+                let l = Double(lobe)
+                let speed: Double = 0.13 + i * 0.028 + l * 0.041
+                let phase: Double = i * 1.7 + l * 3.1
+                let xDrift: Double = sin(time * speed + phase)
+                let yDrift: Double = cos(time * (speed * 0.82 + 0.021) + phase * 1.3)
+                let breathe: Double = 1.0 + 0.26 * sin(time * (0.11 + i * 0.03 + l * 0.02) + phase)
+                // Lobes fade in and out of each other rather than holding a
+                // fixed weight, which is most of what sells the liquid look.
+                let pulse: Double = 0.72 + 0.28 * sin(time * (0.09 + l * 0.033) + i * 2.2)
+
+                result.append(
+                    Lobe(
+                        color: color,
+                        offset: CGSize(
+                            width: CGFloat(xDrift) * size.width * (0.30 + CGFloat(l) * 0.07),
+                            height: CGFloat(yDrift) * size.height * (0.28 + CGFloat(l) * 0.06)
+                        ),
+                        radius: diagonal * CGFloat(0.30 + l * 0.06) * CGFloat(breathe),
+                        opacity: pulse
+                    )
+                )
+            }
+        }
+        return result
+    }
+
+    /// Soft colour clouds drifting on lissajous paths.
+    private func blobs(time: TimeInterval, size: CGSize) -> some View {
+        let diagonal: CGFloat = max(size.width, size.height)
+        let frames: [Lobe] = lobes(time: time, size: size)
+        let swirl: Double = 14 * sin(time * 0.024)
+
+        return ZStack {
+            ForEach(Array(frames.enumerated()), id: \.offset) { _, lobe in
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [lobe.color.opacity(0.85), lobe.color.opacity(0.0)],
+                            center: .center, startRadius: 0, endRadius: lobe.radius
+                        )
+                    )
+                    .frame(width: diagonal * 0.9, height: diagonal * 0.9)
+                    .offset(lobe.offset)
+                    .opacity(lobe.opacity)
+                    .blendMode(.plusLighter)
+            }
+        }
+        .rotationEffect(.degrees(swirl))
+        .blur(radius: diagonal * 0.055)
+        .opacity(0.9)
+    }
+
+    /// Three domain-warped bands, for the sense of something moving under the
+    /// glass. Warping the phase with a second, slower wave keeps them from
+    /// reading as a plain sine sliding sideways.
     private func waves(time: TimeInterval, size: CGSize) -> some View {
         Canvas { context, canvasSize in
-            for band in 0..<2 {
-                let phase = time * (0.20 + Double(band) * 0.09) + Double(band) * 2.1
-                let baseline = canvasSize.height * (0.52 + Double(band) * 0.16)
-                let amplitude = canvasSize.height * (0.045 + Double(band) * 0.02)
+            for band in 0..<3 {
+                let b = Double(band)
+                let phase: Double = time * (0.42 + b * 0.17) + b * 2.1
+                let warpPhase: Double = time * (0.19 + b * 0.06)
+                let baseline: CGFloat = canvasSize.height * CGFloat(0.42 + b * 0.17)
+                let swell: Double = 1.0 + 0.35 * sin(time * (0.13 + b * 0.05) + b)
+                let amplitude: CGFloat = canvasSize.height * CGFloat((0.05 + b * 0.018) * swell)
 
                 var path = Path()
                 path.move(to: CGPoint(x: 0, y: canvasSize.height))
                 path.addLine(to: CGPoint(x: 0, y: baseline))
                 var x: CGFloat = 0
                 while x <= canvasSize.width {
-                    let progress = Double(x / max(canvasSize.width, 1))
-                    let y = baseline + amplitude * sin(progress * .pi * 2.4 + phase)
+                    let p = Double(x / max(canvasSize.width, 1))
+                    let warp: Double = 0.75 * sin(p * .pi * 1.3 - warpPhase)
+                    let y = baseline + amplitude * CGFloat(sin(p * .pi * 2.4 + phase + warp))
                     path.addLine(to: CGPoint(x: x, y: y))
-                    x += 6
+                    x += 5
                 }
                 path.addLine(to: CGPoint(x: canvasSize.width, y: canvasSize.height))
                 path.closeSubpath()
@@ -128,7 +163,7 @@ struct GlassBackground: View {
                 context.fill(
                     path,
                     with: .linearGradient(
-                        Gradient(colors: [tint.opacity(0.22), tint.opacity(0.0)]),
+                        Gradient(colors: [tint.opacity(0.20), tint.opacity(0.0)]),
                         startPoint: CGPoint(x: 0, y: baseline),
                         endPoint: CGPoint(x: 0, y: canvasSize.height)
                     )

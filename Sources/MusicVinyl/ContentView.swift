@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var hovering = false
     /// Last pointer angle during a drag, in degrees; nil when not dragging.
     @State private var dragAngle: Double?
+    @State private var isFullScreen = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -46,18 +47,24 @@ struct ContentView: View {
                 .scaleEffect(controlsVisible ? 1 : 0.96)
                 .allowsHitTesting(controlsVisible)
         }
-        .padding(14)
+        .padding(isFullScreen ? 40 : 14)
         .animation(.easeOut(duration: 0.18), value: controlsVisible)
         .onHover { hovering = $0 }
         .contextMenu { menu }
         .background {
             if model.glassBackground {
-                GlassBackground(palette: model.palette)
+                GlassBackground(palette: model.palette, cornerRadius: isFullScreen ? 0 : 24)
                     .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.35), value: model.glassBackground)
-        .background(WindowConfigurator(alwaysOnTop: model.alwaysOnTop))
+        .background(WindowConfigurator(alwaysOnTop: model.alwaysOnTop, isFullScreen: isFullScreen))
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+            isFullScreen = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in
+            isFullScreen = false
+        }
     }
 
     private var controlsVisible: Bool { hovering && !model.isScrubbing }
@@ -135,6 +142,9 @@ struct ContentView: View {
         Toggle("Glass Background", isOn: $model.glassBackground)
         Toggle("Look Up Artwork Online", isOn: $model.onlineArtwork)
         Divider()
+        Button(isFullScreen ? "Exit Full Screen" : "Enter Full Screen") {
+            WindowConfigurator.toggleFullScreen()
+        }
         Picker("Speed", selection: $model.rpm) {
             Text("33⅓ RPM").tag(33.3333)
             Text("45 RPM").tag(45.0)
@@ -179,6 +189,7 @@ private struct TransportControls: View {
 /// floating level in sync with the user's preference.
 struct WindowConfigurator: NSViewRepresentable {
     let alwaysOnTop: Bool
+    var isFullScreen: Bool = false
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
@@ -188,6 +199,11 @@ struct WindowConfigurator: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async { configure(nsView.window) }
+    }
+
+    /// Toggles the key window in or out of full screen.
+    static func toggleFullScreen() {
+        (NSApp.keyWindow ?? NSApp.windows.first)?.toggleFullScreen(nil)
     }
 
     private func configure(_ window: NSWindow?) {
@@ -207,7 +223,14 @@ struct WindowConfigurator: NSViewRepresentable {
         window.standardWindowButton(.closeButton)?.isHidden = true
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
-        window.level = alwaysOnTop ? .floating : .normal
-        window.collectionBehavior.insert(.fullScreenAuxiliary)
+        // A floating window sits above the full-screen space and breaks the
+        // transition, so drop back to normal level while full screen.
+        let fullScreen = window.styleMask.contains(.fullScreen)
+        window.level = (alwaysOnTop && !fullScreen) ? .floating : .normal
+        // fullScreenPrimary, not fullScreenAuxiliary: auxiliary only lets the
+        // window ride along in another app's space, it can't have its own.
+        window.collectionBehavior.remove(.fullScreenAuxiliary)
+        window.collectionBehavior.insert(.fullScreenPrimary)
+        window.styleMask.insert(.resizable)
     }
 }
