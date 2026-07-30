@@ -24,9 +24,13 @@ reads the current track. Deny it and the record will just sit still.
   the rotation at the real ratio — one full turn is 1.8 s of audio at 33⅓ RPM
   — so you can rock it back and forth to hunt for a spot.
 - **Drag the window background** to move it. There is no title bar.
-- **Hover** over the record for play/pause and skip buttons.
-- **Right-click** for always-on-top, track info, online artwork lookup, and
-  turntable speed (33⅓ / 45 / 78 RPM — 33⅓ is the real speed, and it is fast).
+- **Hover** anywhere over the window for play/pause and skip, below the track
+  name. They fade rather than appear, so nothing above them shifts.
+- **Right-click** for always-on-top, track info, the glass background, online
+  artwork lookup, and turntable speed (33⅓ / 45 / 78 RPM — 33⅓ is the real
+  speed, and it is fast).
+- **Glass Background** swaps the transparent window for a slow field of
+  colour pulled from the current cover, under a frosted pane. Off by default.
 - **Quit** with ⌘Q, or from the right-click menu. The close button is hidden.
 - Drag a window corner to resize; the record scales with it.
 
@@ -36,6 +40,8 @@ reads the current track. Deny it and the record will just sit still.
 | --- | --- |
 | `MusicBridge.swift` | Apple events to Music.app: track info, artwork, transport |
 | `CatalogArtwork.swift` | Online cover lookup, used only when Music has none |
+| `Palette.swift` | Pulls representative colours out of the cover art |
+| `GlassBackground.swift` | The animated colour field behind the record |
 | `NowPlayingModel.swift` | Polls state, derives rotation angle from wall-clock time |
 | `VinylView.swift` | Draws the disc, grooves, label, and tonearm |
 | `ContentView.swift` | Layout, hover controls, window chrome removal |
@@ -75,6 +81,22 @@ Two behaviours of Music.app shaped this code, both measured:
 
 Seeks are coalesced — one in flight, always the newest target — so a fast
 drag never queues stale positions behind itself.
+
+### The glass background
+
+Colours come from a 40×40 downsample of the cover, binned into a coarse RGB
+grid and scored by area weighted toward saturation, so a large beige wall
+doesn't beat the actual accent. Picks are kept apart in hue so the result
+isn't five shades of one colour.
+
+Album art skews dark, and a background built straight from those values comes
+out near-black — the first attempt was almost invisible. Each tint is lifted
+to a usable brightness and its saturation reined in, keeping only the hue.
+
+The frosted pane is hand-rolled rather than `.ultraThinMaterial`: the window
+is transparent, so a system material samples the desktop behind it and the
+look changes with the wallpaper. The field runs at 24fps — it is scenery, and
+a heavily blurred layer at 60fps is a waste of the GPU.
 
 ### Where the album art comes from
 
@@ -117,7 +139,7 @@ checked without launching a window:
   answered, and how long the online lookup took, then exit.
 - `--render-preview out.png` — render the record offscreen to a PNG.
   `PREVIEW_ANGLE`, `PREVIEW_PROGRESS`, `PREVIEW_NOART=1`, `PREVIEW_ARM=off`,
-  and `PREVIEW_ART=cover.jpg` control the frame.
+  `PREVIEW_ART=cover.jpg`, and `PREVIEW_GLASS=1` control the frame.
 - `--selftest` — drive the tonearm and scrub handlers against a live Music.app
   and report pass/fail, then restore the playback state it started with. The
   gestures need a mouse to exercise otherwise. `VINYL_TRACE=1` adds a

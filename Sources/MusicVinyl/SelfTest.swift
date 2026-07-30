@@ -42,15 +42,15 @@ enum SelfTest {
         }
         onMain { model.toggleArm() }
         sleep(1.0)
-        check("lifting arm stops music",
-              onMain { model.armLifted && !model.state.isPlaying } && live().state == .paused,
-              "armLifted=\(onMain { model.armLifted }) model=\(onMain { model.state.rawValue }) music=\(live().state.rawValue)")
+        check("clicking arm stops music",
+              onMain { !model.state.isPlaying } && live().state == .paused,
+              "model=\(onMain { model.state.rawValue }) music=\(live().state.rawValue)")
 
         onMain { model.toggleArm() }
         sleep(1.4)
-        check("dropping arm resumes music",
-              onMain { !model.armLifted && model.state.isPlaying } && live().state == .playing,
-              "armLifted=\(onMain { model.armLifted }) model=\(onMain { model.state.rawValue }) music=\(live().state.rawValue)")
+        check("clicking arm again resumes music",
+              onMain { model.state.isPlaying } && live().state == .playing,
+              "model=\(onMain { model.state.rawValue }) music=\(live().state.rawValue)")
 
         // 2. Holding the record should stop it.
         print("\n-- holding the record --")

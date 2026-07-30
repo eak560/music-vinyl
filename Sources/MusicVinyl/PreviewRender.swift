@@ -55,9 +55,18 @@ enum PreviewRender {
         // PREVIEW_ARM=off shows the tonearm swung clear, as when it is lifted.
         let armEngaged = ProcessInfo.processInfo.environment["PREVIEW_ARM"] != "off"
 
+        // PREVIEW_GLASS renders the animated colour background instead of a
+        // flat backdrop, tinted by whatever cover was supplied.
+        let glass = ProcessInfo.processInfo.environment["PREVIEW_GLASS"] != nil
+        let palette = suppliedArt.map { Palette.extract(from: $0) } ?? []
+
         let side: CGFloat = 720
         let scene = ZStack {
-            Color(white: 0.16)
+            if glass {
+                GlassBackground(palette: palette)
+            } else {
+                Color(white: 0.16)
+            }
             ZStack {
                 VinylView(
                     artwork: withArt ? (suppliedArt ?? sampleArtwork(side: 512)) : nil,

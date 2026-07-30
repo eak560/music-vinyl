@@ -22,14 +22,20 @@ final class NowPlayingModel: ObservableObject {
     @Published var showTrackInfo: Bool = Defaults.bool("showTrackInfo", true) {
         didSet { Defaults.set(showTrackInfo, "showTrackInfo") }
     }
+    /// Draw the animated colour field behind the record instead of leaving the
+    /// window transparent.
+    @Published var glassBackground: Bool = Defaults.bool("glassBackground", false) {
+        didSet { Defaults.set(glassBackground, "glassBackground") }
+    }
+    /// Representative colours of the current cover, tinting that background.
+    @Published private(set) var palette: [Color] = []
+
     /// Whether to fall back to an online cover lookup when Music has no local
     /// artwork. Turning this off keeps the app entirely offline.
     @Published var onlineArtwork: Bool = Defaults.bool("onlineArtwork", true) {
         didSet { Defaults.set(onlineArtwork, "onlineArtwork") }
     }
 
-    /// True when the user has lifted the tonearm off the record.
-    @Published private(set) var armLifted = false
     /// True while the user is holding the record.
     @Published private(set) var isScrubbing = false
     /// Rotation contributed by dragging, on top of the free-running spin.
@@ -117,7 +123,7 @@ final class NowPlayingModel: ObservableObject {
                 expectedState = nil
             }
         }
-        Trace.log("apply(\(snapshot.state.rawValue)) blocked=\(blocked) state=\(state.rawValue) armLifted=\(armLifted) expect=\(expectedState?.rawValue ?? "-")")
+        Trace.log("apply(\(snapshot.state.rawValue)) blocked=\(blocked) state=\(state.rawValue) expect=\(expectedState?.rawValue ?? "-")")
         guard !blocked else { return }
 
         let wasPlaying = state.isPlaying
@@ -126,9 +132,6 @@ final class NowPlayingModel: ObservableObject {
         state = snapshot.state
         track = snapshot.track
 
-        // Playback starting from anywhere means the needle is down.
-        if state.isPlaying { armLifted = false }
-
         if wasPlaying != state.isPlaying {
             setSpinning(state.isPlaying)
             // Poll less often while nothing is moving.
@@ -136,8 +139,7 @@ final class NowPlayingModel: ObservableObject {
         }
 
         if track.id != previousID {
-            artwork = nil
-            artworkTrackID = nil
+            setArtwork(nil, for: nil)
             artworkAttempts = 0
             if !track.id.isEmpty { loadArtwork(for: track.id) }
         }
@@ -155,8 +157,7 @@ final class NowPlayingModel: ObservableObject {
         MusicBridge.shared.fetchArtwork { [weak self] image in
             guard let self, self.track.id == id else { return }
             if let image {
-                self.artwork = image
-                self.artworkTrackID = id
+                self.setArtwork(image, for: id)
             } else if self.onlineArtwork {
                 self.lookUpArtworkOnline(for: id)
             } else {
@@ -169,10 +170,27 @@ final class NowPlayingModel: ObservableObject {
         CatalogArtwork.shared.fetchArtwork(for: track) { [weak self] image in
             guard let self, self.track.id == id else { return }
             if let image {
-                self.artwork = image
-                self.artworkTrackID = id
+                self.setArtwork(image, for: id)
             } else {
                 self.scheduleArtworkRetry(for: id)
+            }
+        }
+    }
+
+    /// Stores the cover and derives its palette off the main thread — the
+    /// extraction walks a downsampled bitmap and would otherwise hitch the spin.
+    private func setArtwork(_ image: NSImage?, for id: String?) {
+        artwork = image
+        artworkTrackID = id
+        guard let image else {
+            palette = []
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let colors = Palette.extract(from: image)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.artworkTrackID == id else { return }
+                self.palette = colors
             }
         }
     }
@@ -219,14 +237,10 @@ final class NowPlayingModel: ObservableObject {
     // MARK: - Direct manipulation
 
     /// Lifts the needle off the record (stopping playback) or drops it back on.
+    /// The arm's position is just a view of playback state — see
+    /// `ContentView.armEngaged` — so pausing from anywhere lifts it.
     func toggleArm() {
-        if armLifted {
-            armLifted = false
-            if state != .playing { issue(.play, optimistic: .playing) }
-        } else {
-            armLifted = true
-            if state.isPlaying { issue(.pause, optimistic: .paused) }
-        }
+        issue(state.isPlaying ? .pause : .play, optimistic: state.isPlaying ? .paused : .playing)
     }
 
     /// The user has grabbed the record; stop playback the way a hand on a
@@ -255,7 +269,7 @@ final class NowPlayingModel: ObservableObject {
     func endScrub() {
         guard isScrubbing else { return }
         isScrubbing = false
-        if resumeAfterScrub && !armLifted { issue(.play, optimistic: .playing) }
+        if resumeAfterScrub { issue(.play, optimistic: .playing) }
         // Fold the hand-rotation into the spin so the label doesn't jump.
         spinBaseAngle += manualOffset
         manualOffset = 0
@@ -289,7 +303,7 @@ final class NowPlayingModel: ObservableObject {
     /// Sends a transport command, shows its effect immediately, and ignores
     /// polling until Music confirms — then re-reads the truth.
     private func issue(_ transport: Transport, optimistic: PlayerState?) {
-        Trace.log("issue(\(transport)) optimistic=\(optimistic?.rawValue ?? "-") armLifted=\(armLifted)")
+        Trace.log("issue(\(transport)) optimistic=\(optimistic?.rawValue ?? "-")")
         pendingCommands += 1
         if let optimistic {
             state = optimistic
@@ -324,7 +338,6 @@ final class NowPlayingModel: ObservableObject {
     // MARK: - Transport
 
     func playPause() {
-        if !state.isPlaying { armLifted = false }
         issue(.playPause, optimistic: state.isPlaying ? .paused : .playing)
     }
 

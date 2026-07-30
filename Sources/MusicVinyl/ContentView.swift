@@ -27,10 +27,6 @@ struct ContentView: View {
                         onTap: { model.toggleArm() }
                     )
 
-                    if hovering && !model.isScrubbing {
-                        TransportControls()
-                            .transition(.opacity.combined(with: .scale(scale: 0.94)))
-                    }
                 }
                 // Only the record itself responds to grabbing.
                 .contentShape(Circle())
@@ -42,16 +38,35 @@ struct ContentView: View {
             if model.showTrackInfo {
                 trackInfo
             }
+
+            // Always laid out, only faded — appearing and disappearing would
+            // resize everything above it on every hover.
+            TransportControls()
+                .opacity(controlsVisible ? 1 : 0)
+                .scaleEffect(controlsVisible ? 1 : 0.96)
+                .allowsHitTesting(controlsVisible)
         }
         .padding(14)
-        .animation(.easeOut(duration: 0.18), value: hovering)
+        .animation(.easeOut(duration: 0.18), value: controlsVisible)
         .onHover { hovering = $0 }
         .contextMenu { menu }
+        .background {
+            if model.glassBackground {
+                GlassBackground(palette: model.palette)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.35), value: model.glassBackground)
         .background(WindowConfigurator(alwaysOnTop: model.alwaysOnTop))
     }
 
+    private var controlsVisible: Bool { hovering && !model.isScrubbing }
+
+    /// The needle is down exactly when the music is moving — so pausing from
+    /// anywhere, including Music itself, lifts the arm. It stays down through a
+    /// scrub, since a hand on the record doesn't raise the tonearm.
     private var armEngaged: Bool {
-        !model.armLifted && model.state != .stopped && model.state != .notRunning
+        model.state.isPlaying || model.isScrubbing
     }
 
     /// Grabbing the record stops playback and turns it by hand; the playback
@@ -117,6 +132,7 @@ struct ContentView: View {
     @ViewBuilder private var menu: some View {
         Toggle("Always on Top", isOn: $model.alwaysOnTop)
         Toggle("Show Track Info", isOn: $model.showTrackInfo)
+        Toggle("Glass Background", isOn: $model.glassBackground)
         Toggle("Look Up Artwork Online", isOn: $model.onlineArtwork)
         Divider()
         Picker("Speed", selection: $model.rpm) {
@@ -181,6 +197,12 @@ struct WindowConfigurator: NSViewRepresentable {
         window.hasShadow = false
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        // `.hiddenTitleBar` hides the title and buttons but keeps the titlebar,
+        // and macOS draws a hairline under it. On an opaque window that is
+        // invisible; on this transparent one it reads as a stray line across
+        // the top. Let the content run edge to edge instead.
+        window.titlebarSeparatorStyle = .none
+        window.styleMask.insert(.fullSizeContentView)
         window.isMovableByWindowBackground = true
         window.standardWindowButton(.closeButton)?.isHidden = true
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true

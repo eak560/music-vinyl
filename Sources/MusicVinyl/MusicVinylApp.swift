@@ -36,6 +36,7 @@ struct MusicVinylApp: App {
                 Divider()
                 Toggle("Always on Top", isOn: $model.alwaysOnTop)
                 Toggle("Show Track Info", isOn: $model.showTrackInfo)
+                Toggle("Glass Background", isOn: $model.glassBackground)
                 Toggle("Look Up Artwork Online", isOn: $model.onlineArtwork)
             }
         }
