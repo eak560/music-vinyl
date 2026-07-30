@@ -14,13 +14,27 @@ enum PreviewRender {
             print("artist: \(snapshot.track.artist)")
             print("album: \(snapshot.track.album)")
             print("position: \(snapshot.track.position) / \(snapshot.track.duration)")
+            func describe(_ image: NSImage?) -> String {
+                image.map { "\(Int($0.size.width))x\(Int($0.size.height))" } ?? "none"
+            }
+            // Report both sources so it is obvious which one is carrying a
+            // given track.
             let semaphore = DispatchSemaphore(value: 0)
             MusicBridge.shared.fetchArtwork { image in
-                print("artwork: \(image.map { "\(Int($0.size.width))x\(Int($0.size.height))" } ?? "none")")
-                semaphore.signal()
+                print("artwork (local): \(describe(image))")
+                guard image == nil else {
+                    semaphore.signal()
+                    return
+                }
+                let start = Date()
+                CatalogArtwork.shared.fetchArtwork(for: snapshot.track) { online in
+                    let ms = Date().timeIntervalSince(start) * 1000
+                    print(String(format: "artwork (online): %@ in %.0f ms", describe(online), ms))
+                    semaphore.signal()
+                }
             }
-            // fetchArtwork hops back to the main queue, which is this thread —
-            // pump the run loop until the callback lands.
+            // The callback hops back to the main queue, which is this thread —
+            // pump the run loop until it lands.
             while semaphore.wait(timeout: .now()) == .timedOut {
                 RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
             }
@@ -34,13 +48,16 @@ enum PreviewRender {
         let angle = Double(ProcessInfo.processInfo.environment["PREVIEW_ANGLE"] ?? "") ?? 24
         let progress = Double(ProcessInfo.processInfo.environment["PREVIEW_PROGRESS"] ?? "") ?? 0.35
         let withArt = ProcessInfo.processInfo.environment["PREVIEW_NOART"] == nil
+        // PREVIEW_ART points at a real cover file; otherwise a stand-in is drawn.
+        let suppliedArt = ProcessInfo.processInfo.environment["PREVIEW_ART"]
+            .flatMap { NSImage(contentsOfFile: $0) }
 
         let side: CGFloat = 720
         let scene = ZStack {
             Color(white: 0.16)
             ZStack {
                 VinylView(
-                    artwork: withArt ? sampleArtwork(side: 512) : nil,
+                    artwork: withArt ? (suppliedArt ?? sampleArtwork(side: 512)) : nil,
                     angle: angle,
                     title: "Midnight Ride",
                     artist: "The Long Players"

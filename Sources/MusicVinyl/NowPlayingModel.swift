@@ -22,6 +22,11 @@ final class NowPlayingModel: ObservableObject {
     @Published var showTrackInfo: Bool = Defaults.bool("showTrackInfo", true) {
         didSet { Defaults.set(showTrackInfo, "showTrackInfo") }
     }
+    /// Whether to fall back to an online cover lookup when Music has no local
+    /// artwork. Turning this off keeps the app entirely offline.
+    @Published var onlineArtwork: Bool = Defaults.bool("onlineArtwork", true) {
+        didSet { Defaults.set(onlineArtwork, "onlineArtwork") }
+    }
 
     private var timer: Timer?
     private var artworkTrackID: String?
@@ -98,17 +103,37 @@ final class NowPlayingModel: ObservableObject {
 
     private func loadArtwork(for id: String) {
         artworkAttempts += 1
+        // Local first — library tracks never cause a network request.
         MusicBridge.shared.fetchArtwork { [weak self] image in
             guard let self, self.track.id == id else { return }
             if let image {
                 self.artwork = image
                 self.artworkTrackID = id
-            } else if self.artworkAttempts < Self.maxArtworkAttempts {
-                DispatchQueue.main.asyncAfter(deadline: .now() + Self.artworkRetryDelay) { [weak self] in
-                    guard let self, self.track.id == id, self.artwork == nil else { return }
-                    self.loadArtwork(for: id)
-                }
+            } else if self.onlineArtwork {
+                self.lookUpArtworkOnline(for: id)
+            } else {
+                self.scheduleArtworkRetry(for: id)
             }
+        }
+    }
+
+    private func lookUpArtworkOnline(for id: String) {
+        CatalogArtwork.shared.fetchArtwork(for: track) { [weak self] image in
+            guard let self, self.track.id == id else { return }
+            if let image {
+                self.artwork = image
+                self.artworkTrackID = id
+            } else {
+                self.scheduleArtworkRetry(for: id)
+            }
+        }
+    }
+
+    private func scheduleArtworkRetry(for id: String) {
+        guard artworkAttempts < Self.maxArtworkAttempts else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.artworkRetryDelay) { [weak self] in
+            guard let self, self.track.id == id, self.artwork == nil else { return }
+            self.loadArtwork(for: id)
         }
     }
 

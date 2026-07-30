@@ -67,6 +67,7 @@ struct ContentView: View {
     @ViewBuilder private var menu: some View {
         Toggle("Always on Top", isOn: $model.alwaysOnTop)
         Toggle("Show Track Info", isOn: $model.showTrackInfo)
+        Toggle("Look Up Artwork Online", isOn: $model.onlineArtwork)
         Divider()
         Picker("Speed", selection: $model.rpm) {
             Text("33⅓ RPM").tag(33.3333)
