@@ -333,6 +333,52 @@ stack sample. Use the async API, or `Pump` if you need to wait.
 `./make-icon.sh` regenerates `Resources/AppIcon.icns` from the same SwiftUI
 code that draws the record.
 
+## Performance
+
+Measured as CPU time over a 12-second window, against the same window size,
+disc style and track.
+
+| | Before | After |
+| --- | --- | --- |
+| Playing | 23.7% of a core | **15.5%** |
+| Paused, window open | 22.2% of a core | **1.7%** |
+
+The paused figure was the real problem: an idle widget was burning a quarter of
+a core to animate a record that was not turning. Everything animated now hangs
+off one condition — the window is on screen *and* something is actually moving —
+so an idle or hidden window costs nothing.
+
+The rest came from four measured findings:
+
+- **The colour field was ten blurred layers.** Ten `Circle` views with
+  `.blendMode` and `.drawingGroup()` meant an offscreen composite plus a wide
+  gaussian every frame; `GlassBackground.body` was the hottest thing in the
+  app. It is one `Canvas` now. Radial gradients are already soft, so the blur
+  was buying almost nothing — but dropping it exposed banding, fixed with eased
+  multi-stop gradients rather than by putting the blur back.
+- **The tonearm never stopped animating.** Its `progress` updates every poll
+  and its animation lasts about as long as the gap between polls, so it was
+  perpetually mid-animation, redrawing capsules, gradients and a shadow every
+  frame — 3.4% of a core. Rasterising it means each frame moves a texture.
+- **A changing angle invalidated the whole record.** The disc is now split into
+  what turns and what is rotationally symmetric, so only a transform changes
+  per frame. Its shadow moved onto a static circle, since a circle's shadow
+  does not change as it turns.
+- **Blend modes force offscreen passes.** `.screen` and `.softLight` on the
+  sheen and highlight were replaced with plain compositing, which at those
+  opacities is indistinguishable.
+
+One thing that was tried and **measured worse**: animating the angle as a
+published property so Core Animation could interpolate it. SwiftUI runs
+`Double` animations in process rather than on the render server, so nothing was
+offloaded, and publishing the angle invalidated the whole view tree every frame
+instead of just the record — 17.6% against 14.5%. The `TimelineView` stayed.
+
+Artwork caches are bounded. Scrolling a long playlist asks for a cover per row,
+and a 600×600 cover is over a megabyte decoded, so keeping every one browsed in
+a session grew without limit. Disk reads and writes for that cache moved off
+the main thread, since they happen mid-gesture.
+
 ## Requirements
 
 macOS 14+, Swift 6 toolchain (Xcode 15+). No third-party dependencies.

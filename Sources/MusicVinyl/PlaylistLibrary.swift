@@ -52,6 +52,8 @@ final class PlaylistLibrary: ObservableObject {
         tracks = []
         artwork = [:]
         requested = []
+        pendingArtwork.values.forEach { $0.cancel() }
+        pendingArtwork = [:]
         isLoading = true
         MusicBridge.shared.fetchTracks(inPlaylistWithID: playlist.id) { [weak self] result in
             guard let self, self.selected?.id == playlist.id else { return }
@@ -65,12 +67,31 @@ final class PlaylistLibrary: ObservableObject {
         tracks = []
         artwork = [:]
         requested = []
+        pendingArtwork.values.forEach { $0.cancel() }
+        pendingArtwork = [:]
     }
+
+    private var pendingArtwork: [Int: DispatchWorkItem] = [:]
 
     /// Asks for one row's cover. Cheap to call repeatedly: already-requested
     /// rows are skipped, and CatalogArtwork dedupes by album underneath, so a
     /// playlist that walks one record does a single lookup.
+    ///
+    /// Briefly deferred, because the wheel reports every entry it passes over:
+    /// spinning through a few hundred tracks would otherwise fire a lookup for
+    /// each one. Anything already cached still resolves immediately once the
+    /// request goes out.
     func requestArtwork(for track: PlaylistTrack) {
+        guard !requested.contains(track.id), pendingArtwork[track.id] == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.pendingArtwork[track.id] = nil
+            self?.startArtworkRequest(for: track)
+        }
+        pendingArtwork[track.id] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+    }
+
+    private func startArtworkRequest(for track: PlaylistTrack) {
         guard !requested.contains(track.id) else { return }
         requested.insert(track.id)
         var probe = Track()

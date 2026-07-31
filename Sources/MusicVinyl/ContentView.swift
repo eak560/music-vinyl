@@ -7,6 +7,9 @@ struct ContentView: View {
     /// Last pointer angle during a drag, in degrees; nil when not dragging.
     @State private var dragAngle: Double?
     @State private var isFullScreen = false
+    /// False while the window is hidden behind something, minimised, or on
+    /// another Space — there is nothing to animate for.
+    @State private var windowVisible = true
     @State private var showingPlaylists = false
     @State private var showingSettings = false
     @StateObject private var library = PlaylistLibrary()
@@ -56,8 +59,16 @@ struct ContentView: View {
                     // TimelineView drives the spin; it idles when nothing is playing.
                     // Keeps running through a cover cross-fade even when the
                     // record is stopped, or the blend would freeze part-way.
-                    TimelineView(.animation(minimumInterval: 1.0 / 60.0,
-                                            paused: !model.state.isPlaying && !model.isCrossFadingArtwork)) { context in
+                    // A TimelineView, not an animated property. Animating the
+                    // angle on the model instead was tried and measured worse
+                    // (17.6% vs 14.5%): SwiftUI runs Double animations in
+                    // process rather than on the render server, so nothing was
+                    // offloaded, and publishing the angle invalidated the whole
+                    // view tree every frame instead of just the record.
+                    //
+                    // The interval follows the turntable: what matters is how
+                    // far the record moves per frame, not the frame count.
+                    TimelineView(.animation(minimumInterval: model.frameInterval, paused: !animating)) { context in
                         VinylView(
                             artwork: model.artwork,
                             angle: model.angle(at: context.date),
@@ -69,11 +80,13 @@ struct ContentView: View {
                         )
                     }
 
-                    TonearmView(
-                        progress: model.progress,
-                        engaged: armEngaged,
-                        onTap: { model.toggleArm() }
-                    )
+                    if ProcessInfo.processInfo.environment["VINYL_NO_ARM"] == nil {
+                        TonearmView(
+                            progress: model.progress,
+                            engaged: armEngaged,
+                            onTap: { model.toggleArm() }
+                        )
+                    }
 
                 }
                 // Only the record itself responds to grabbing.
@@ -105,7 +118,9 @@ struct ContentView: View {
         .contextMenu { menu }
         .background {
             if model.glassBackground {
-                GlassBackground(palette: model.palette, cornerRadius: isFullScreen ? 0 : 24)
+                GlassBackground(palette: model.palette,
+                                cornerRadius: isFullScreen ? 0 : 24,
+                                paused: !animating)
                     .transition(.opacity)
             }
         }
@@ -121,6 +136,9 @@ struct ContentView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 7) { exit(0) }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeOcclusionStateNotification)) { _ in
+            windowVisible = NSApp.occlusionState.contains(.visible)
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
             isFullScreen = true
         }
@@ -130,6 +148,12 @@ struct ContentView: View {
     }
 
     private var controlsVisible: Bool { hovering && !model.isScrubbing }
+
+    /// Whether anything on screen still needs redrawing. Everything animated
+    /// hangs off this, so an idle or hidden window costs nothing.
+    private var animating: Bool {
+        windowVisible && (model.state.isPlaying || model.isCrossFadingArtwork || model.isScrubbing)
+    }
 
     /// The needle is down exactly when the music is moving — so pausing from
     /// anywhere, including Music itself, lifts the arm. It stays down through a

@@ -68,6 +68,7 @@ final class NowPlayingModel: ObservableObject {
     @Published private(set) var manualOffset: Double = 0
 
     private var timer: Timer?
+    private var lastPermissionCheck = Date.distantPast
     private var artworkTrackID: String?
     private var artworkAttempts = 0
 
@@ -158,8 +159,13 @@ final class NowPlayingModel: ObservableObject {
         // would be discarded anyway, so don't issue them.
         guard !isScrubbing else { return }
         // Accessibility may be granted while the app is already running; pick
-        // it up rather than making the user relaunch.
-        if interceptMediaKeys && !MediaKeyTap.shared.isRunning { syncMediaKeyTap() }
+        // it up rather than making the user relaunch. Checked occasionally
+        // rather than on every poll — it is a call into the TCC daemon.
+        if interceptMediaKeys, !MediaKeyTap.shared.isRunning,
+           Date().timeIntervalSince(lastPermissionCheck) > 10 {
+            lastPermissionCheck = Date()
+            syncMediaKeyTap()
+        }
         MusicBridge.shared.fetchSnapshot { [weak self] snapshot in
             guard let self else { return }
             self.apply(snapshot)
@@ -317,6 +323,13 @@ final class NowPlayingModel: ObservableObject {
     }
 
     private var degreesPerSecond: Double { rpm * 360.0 / 60.0 }
+
+    /// Redraw often enough to keep the angular step per frame constant —
+    /// roughly 3.3°, which is what 33⅓ RPM at 60fps gives — and no more.
+    var frameInterval: Double {
+        guard degreesPerSecond > 0 else { return 1.0 / 30.0 }
+        return min(max(3.3 / degreesPerSecond, 1.0 / 60.0), 1.0 / 24.0)
+    }
 
     func angle(at date: Date) -> Double {
         guard let start = spinStart else { return spinBaseAngle + manualOffset }

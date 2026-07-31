@@ -18,9 +18,15 @@ final class CatalogArtwork {
     /// Keyed by track id. `nil` marks a lookup that failed, so a track with no
     /// match is not re-requested on every retry tick.
     private var cache: [String: NSImage?] = [:]
+    private var cacheOrder: [String] = []
     /// Keyed by artist + album. Consecutive tracks from one album share a
     /// cover, so the second onwards resolve with no network at all.
     private var albumCache: [String: NSImage] = [:]
+    private var albumOrder: [String] = []
+    /// Both caches are bounded. Scrolling a long playlist asks for a cover per
+    /// row, and a 600×600 cover costs well over a megabyte once decoded, so
+    /// keeping every one browsed in a session grew without limit.
+    private static let memoryLimit = 24
     /// Survives relaunches, so a cover is fetched once ever rather than once
     /// per session.
     private let diskDirectory: URL
@@ -59,13 +65,30 @@ final class CatalogArtwork {
             finish(known, for: id, completion: completion)
             return
         }
-        // ...or seen in an earlier session.
-        if let data = try? Data(contentsOf: diskURL(for: album)), let image = NSImage(data: data) {
-            albumCache[album] = image
-            finish(image, for: id, completion: completion)
-            return
-        }
 
+        // ...or seen in an earlier session. Read off the main thread: this runs
+        // while the wheel is being scrolled, and a stall here is a dropped
+        // frame in the middle of a gesture.
+        let url = diskURL(for: album)
+        Self.diskQueue.async { [weak self] in
+            let cached = (try? Data(contentsOf: url)).flatMap(NSImage.init(data:))
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let cached {
+                    self.remember(cached, forAlbum: album)
+                    self.finish(cached, for: id, completion: completion)
+                } else {
+                    self.search(for: track, id: id, album: album, completion: completion)
+                }
+            }
+        }
+    }
+
+    private static let diskQueue = DispatchQueue(label: "com.ehsan.musicvinyl.artwork-disk",
+                                                 qos: .userInitiated)
+
+    private func search(for track: Track, id: String, album: String,
+                        completion: @escaping (NSImage?) -> Void) {
         // Pass 1: the track itself.
         search(term: "\(track.artist) \(track.title)",
                pick: { Self.trackMatch(in: $0, for: track) }) { [weak self] url in
@@ -130,10 +153,12 @@ final class CatalogArtwork {
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let image, let data {
-                    self.albumCache[album] = image
+                    self.remember(image, forAlbum: album)
                     // Store the bytes as delivered; re-encoding would be lossy
-                    // and slower for no gain.
-                    try? data.write(to: self.diskURL(for: album), options: .atomic)
+                    // and slower for no gain. Written off the main thread for
+                    // the same reason the read is.
+                    let url = self.diskURL(for: album)
+                    Self.diskQueue.async { try? data.write(to: url, options: .atomic) }
                 }
                 self.finish(image, for: id, completion: completion)
             }
@@ -154,8 +179,24 @@ final class CatalogArtwork {
     }
 
     private func finish(_ image: NSImage?, for id: String, completion: @escaping (NSImage?) -> Void) {
+        if cache[id] == nil { cacheOrder.append(id) }
         cache[id] = image
+        trim(&cacheOrder, limit: Self.memoryLimit * 4) { self.cache.removeValue(forKey: $0) }
         completion(image)
+    }
+
+    private func remember(_ image: NSImage, forAlbum key: String) {
+        if albumCache[key] == nil { albumOrder.append(key) }
+        albumCache[key] = image
+        trim(&albumOrder, limit: Self.memoryLimit) { self.albumCache.removeValue(forKey: $0) }
+    }
+
+    /// Drops the oldest keys once the list outgrows its limit.
+    private func trim(_ order: inout [String], limit: Int, remove: (String) -> Void) {
+        guard order.count > limit else { return }
+        let excess = order.count - limit
+        for key in order.prefix(excess) { remove(key) }
+        order.removeFirst(excess)
     }
 
     // MARK: - Matching

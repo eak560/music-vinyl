@@ -21,24 +21,125 @@ struct VinylView: View {
     var body: some View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height) * Self.discScale
+            // Split deliberately: everything that turns is built once and only
+            // its transform changes per frame, while the rest is rotationally
+            // symmetric and never needs to move. Building the whole disc inside
+            // the animation used to make VinylView.body the hottest thing in
+            // the app, because a changing `angle` invalidated every layer.
             ZStack {
-                switch style {
-                case .classic:
-                    DiscBody(side: side).equatable()
-                case .picture:
-                    // Cover across the whole face, with the grooves cut over it.
-                    coverFace(side: side)
-                        .clipShape(Circle())
-                        .rotationEffect(.degrees(angle))
-                    Grooves(side: side, style: style).equatable()
-                case .glass:
-                    // Clear pressing: the cover sits under a translucent disc,
-                    // so it reads as tinted rather than printed.
-                    coverFace(side: side)
-                        .clipShape(Circle())
-                        .rotationEffect(.degrees(angle))
-                        .opacity(0.34)
-                        .saturation(0.75)
+                Circle()
+                    .fill(Color.black.opacity(0.9))
+                    .frame(width: side, height: side)
+                    .shadow(color: .black.opacity(0.55), radius: side * 0.045, x: 0, y: side * 0.018)
+
+                RotatingFace(
+                    side: side,
+                    style: style,
+                    artwork: artwork,
+                    previousArtwork: previousArtwork,
+                    fade: artworkFade,
+                    title: title,
+                    artist: artist
+                )
+                .equatable()
+                .drawingGroup()
+                .rotationEffect(.degrees(angle))
+
+                StaticFace(side: side, style: style).equatable()
+            }
+            .frame(width: side, height: side)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+/// Everything that turns with the record: the printed face and the sheen.
+private struct RotatingFace: View, Equatable {
+    let side: CGFloat
+    let style: DiscStyle
+    let artwork: NSImage?
+    let previousArtwork: NSImage?
+    let fade: Double
+    let title: String
+    let artist: String
+
+    var body: some View {
+        ZStack {
+            switch style {
+            case .classic:
+                DiscBody(side: side).equatable()
+                LabelView(
+                    artwork: artwork,
+                    previousArtwork: previousArtwork,
+                    fade: fade,
+                    side: side,
+                    title: title,
+                    artist: artist
+                )
+                .frame(width: side * 0.34, height: side * 0.34)
+            case .picture:
+                coverFace.clipShape(Circle())
+            case .glass:
+                coverFace
+                    .clipShape(Circle())
+                    .opacity(0.34)
+                    .saturation(0.75)
+            }
+
+            // A faint bright wedge sweeping the surface.
+            Circle()
+                .fill(
+                    AngularGradient(
+                        colors: [
+                            .white.opacity(0.0), .white.opacity(0.05), .white.opacity(0.0),
+                            .white.opacity(0.0), .white.opacity(0.03), .white.opacity(0.0)
+                        ],
+                        center: .center
+                    )
+                )
+        }
+        .frame(width: side, height: side)
+    }
+
+    /// The cover, cross-faded, sized to cover the whole disc. Used by the
+    /// picture and clear styles, where the art is the record rather than a
+    /// label stuck to it.
+    private var coverFace: some View {
+        ZStack {
+            Color(white: 0.08)
+            cover(previousArtwork)
+            cover(artwork).opacity(fade)
+        }
+    }
+
+    @ViewBuilder
+    private func cover(_ image: NSImage?) -> some View {
+        if let image {
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: side, height: side)
+        }
+    }
+
+    static func == (lhs: RotatingFace, rhs: RotatingFace) -> Bool {
+        lhs.side == rhs.side && lhs.style == rhs.style
+            && lhs.artwork === rhs.artwork && lhs.previousArtwork === rhs.previousArtwork
+            && lhs.fade == rhs.fade && lhs.title == rhs.title && lhs.artist == rhs.artist
+    }
+}
+
+/// Rotationally symmetric layers, which never need to turn: grooves, the fixed
+/// highlight, and the spindle.
+private struct StaticFace: View, Equatable {
+    let side: CGFloat
+    let style: DiscStyle
+
+    var body: some View {
+        ZStack {
+            if style != .classic {
+                if style == .glass {
                     Circle()
                         .fill(
                             RadialGradient(
@@ -46,82 +147,36 @@ struct VinylView: View {
                                 center: .topLeading, startRadius: 0, endRadius: side
                             )
                         )
-                    Grooves(side: side, style: style).equatable()
+                }
+                Grooves(side: side, style: style).equatable()
+                if style == .glass {
                     Circle().strokeBorder(.white.opacity(0.35), lineWidth: max(0.6, side * 0.004))
                 }
-
-                // Rotating sheen — a faint bright wedge sweeping the surface.
-                Circle()
-                    .fill(
-                        AngularGradient(
-                            colors: [
-                                .white.opacity(0.0), .white.opacity(0.05), .white.opacity(0.0),
-                                .white.opacity(0.0), .white.opacity(0.03), .white.opacity(0.0)
-                            ],
-                            center: .center
-                        )
-                    )
-                    .rotationEffect(.degrees(angle))
-                    .blendMode(.screen)
-
-                if style == .classic {
-                    LabelView(
-                        artwork: artwork,
-                        previousArtwork: previousArtwork,
-                        fade: artworkFade,
-                        side: side,
-                        title: title,
-                        artist: artist
-                    )
-                    .frame(width: side * 0.34, height: side * 0.34)
-                    .rotationEffect(.degrees(angle))
-                }
-
-                // Fixed highlight from a light above-left, plus the spindle.
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [.white.opacity(0.14), .clear, .clear, .white.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .blendMode(.softLight)
-
-                Circle()
-                    .fill(Color.black.opacity(0.9))
-                    .frame(width: side * 0.026, height: side * 0.026)
-                    .overlay(
-                        Circle().strokeBorder(.white.opacity(0.18), lineWidth: max(0.5, side * 0.0018))
-                    )
             }
-            .frame(width: side, height: side)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .shadow(color: .black.opacity(0.55), radius: side * 0.045, x: 0, y: side * 0.018)
+
+            // Fixed highlight from a light above-left, plus the spindle.
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [.white.opacity(0.14), .clear, .clear, .white.opacity(0.05)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .opacity(0.7)
+
+            Circle()
+                .fill(Color.black.opacity(0.9))
+                .frame(width: side * 0.026, height: side * 0.026)
+                .overlay(
+                    Circle().strokeBorder(.white.opacity(0.18), lineWidth: max(0.5, side * 0.0018))
+                )
         }
-        .aspectRatio(1, contentMode: .fit)
+        .frame(width: side, height: side)
     }
 
-    /// The cover, cross-faded, sized to cover the whole disc. Used by the
-    /// picture and clear styles, where the art is the record rather than a
-    /// label stuck to it.
-    @ViewBuilder
-    private func coverFace(side: CGFloat) -> some View {
-        ZStack {
-            Color(white: 0.08)
-            cover(previousArtwork, side: side)
-            cover(artwork, side: side).opacity(artworkFade)
-        }
-    }
-
-    @ViewBuilder
-    private func cover(_ image: NSImage?, side: CGFloat) -> some View {
-        if let image {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: side, height: side)
-        }
+    static func == (lhs: StaticFace, rhs: StaticFace) -> Bool {
+        lhs.side == rhs.side && lhs.style == rhs.style
     }
 }
 
@@ -362,11 +417,17 @@ struct TonearmView: View {
                     .position(pivot)
             }
             .frame(width: side, height: side)
+            .shadow(color: .black.opacity(0.45), radius: side * 0.012, x: side * 0.004, y: side * 0.012)
+            // `progress` updates every poll and the animation below lasts about
+            // as long as the gap between them, so the arm is perpetually
+            // mid-animation. Rasterising it once means each frame moves a
+            // texture rather than redrawing capsules, gradients and a shadow —
+            // the arm was costing 3.4% of a core.
+            .drawingGroup()
             .rotationEffect(
                 .degrees(rotation),
                 anchor: UnitPoint(x: Self.pivotU.x, y: Self.pivotU.y)
             )
-            .shadow(color: .black.opacity(0.45), radius: side * 0.012, x: side * 0.004, y: side * 0.012)
             .animation(.easeInOut(duration: 0.9), value: engaged)
             .animation(.linear(duration: 1.0), value: progress)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
