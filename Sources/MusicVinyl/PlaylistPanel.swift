@@ -8,6 +8,9 @@ struct PlaylistPanel: View {
     @ObservedObject var library: PlaylistLibrary
     let onClose: () -> Void
 
+    /// Entry the wheel is currently over, which the cover alongside follows.
+    @State private var focusedIndex: Int?
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -107,20 +110,74 @@ struct PlaylistPanel: View {
         }
     }
 
-    /// Tracks turn on a selector wheel; scroll, drag or click to move it.
+    /// Tracks turn on a selector wheel; scroll, drag or click to move it. When
+    /// there is room, the cover of whatever the wheel is over sits alongside.
     private func trackWheel(in playlist: MusicPlaylist) -> some View {
-        OptionWheelList(
-            items: library.tracks.map(\.title),
-            subtitles: library.tracks.map(\.artist),
-            nowPlaying: library.tracks.firstIndex(where: isNowPlaying),
-            onPlay: { index in
-                let track = library.tracks[index]
-                model.playFromQueue(playlistID: playlist.id,
-                                    index: track.id,
-                                    count: library.tracks.count)
-                refreshSoon()
+        GeometryReader { geo in
+            let showsCover = geo.size.width > 430
+            HStack(spacing: 0) {
+                OptionWheelList(
+                    items: library.tracks.map(\.title),
+                    subtitles: library.tracks.map(\.artist),
+                    nowPlaying: library.tracks.firstIndex(where: isNowPlaying),
+                    onPlay: { index in
+                        let track = library.tracks[index]
+                        model.playFromQueue(playlistID: playlist.id,
+                                            index: track.id,
+                                            count: library.tracks.count)
+                        refreshSoon()
+                    },
+                    onFocus: { index in
+                        focusedIndex = index
+                        // Fetch a little either side so flying past an entry
+                        // still lands on a cover rather than a placeholder.
+                        for offset in -1...1 {
+                            let neighbour = index + offset
+                            guard library.tracks.indices.contains(neighbour) else { continue }
+                            library.requestArtwork(for: library.tracks[neighbour])
+                        }
+                    }
+                )
+                .frame(width: showsCover ? geo.size.width * 0.46 : geo.size.width)
+
+                if showsCover {
+                    focusedCover(side: min(geo.size.height - 48, geo.size.width * 0.42))
+                        .frame(maxWidth: .infinity)
+                }
             }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+    }
+
+    /// The cover for whatever the wheel is over, cross-fading as it changes.
+    @ViewBuilder
+    private func focusedCover(side: CGFloat) -> some View {
+        let track = focusedIndex.flatMap { library.tracks.indices.contains($0) ? library.tracks[$0] : nil }
+        let image = track.flatMap { library.artwork[$0.id] }
+
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.white.opacity(0.05))
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .id(ObjectIdentifier(image))
+                    .transition(.opacity)
+            } else {
+                Image(systemName: "music.note")
+                    .font(.system(size: side * 0.18, weight: .light))
+                    .foregroundStyle(.white.opacity(0.18))
+            }
+        }
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(.white.opacity(0.10), lineWidth: 1)
         )
+        .shadow(color: .black.opacity(0.5), radius: 18, y: 10)
+        .animation(.easeOut(duration: 0.28), value: image)
     }
 
     private var playlistRows: some View {

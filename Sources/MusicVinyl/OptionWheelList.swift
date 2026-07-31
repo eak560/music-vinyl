@@ -12,6 +12,9 @@ struct OptionWheelList: View {
     /// Index currently playing, drawn with a marker.
     var nowPlaying: Int?
     let onPlay: (Int) -> Void
+    /// Fires as the wheel passes over each entry, including while it is still
+    /// moving, so the cover alongside can keep up.
+    var onFocus: ((Int) -> Void)?
 
     private let fontSize: CGFloat = 16
     private let spacing: CGFloat = 1.9
@@ -28,6 +31,7 @@ struct OptionWheelList: View {
     @State private var position: Double = 0
     @State private var dragOrigin: Double?
     @State private var snapWork: DispatchWorkItem?
+    @State private var scrollMonitor: Any?
 
     private var rowHeight: Double { Double(fontSize) * Double(spacing) }
     private var tiltRadians: Double { tiltDegrees * .pi / 180 }
@@ -45,13 +49,7 @@ struct OptionWheelList: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
-        // ImageRenderer draws an NSViewRepresentable as a placeholder block, so
-        // the dev render flag leaves the catcher out.
-        .background {
-            if ProcessInfo.processInfo.environment["VINYL_NO_SCROLL"] == nil {
-                ScrollCatcher { delta in turn(by: -Double(delta) / rowHeight) }
-            }
-        }
+
         .gesture(
             DragGesture(minimumDistance: 2)
                 .onChanged { value in
@@ -64,10 +62,37 @@ struct OptionWheelList: View {
                     snap()
                 }
         )
-        .onAppear { position = Double(nowPlaying ?? 0) }
+        .onAppear {
+            position = Double(nowPlaying ?? 0)
+            onFocus?(Int(position.rounded()))
+            startScrollMonitor()
+        }
+        .onDisappear {
+            if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
+            scrollMonitor = nil
+        }
+        .onChange(of: Int(position.rounded())) { _, index in
+            guard index >= 0, index < items.count else { return }
+            onFocus?(index)
+        }
         .onChange(of: nowPlaying) { _, new in
             guard let new else { return }
             withAnimation(.easeOut(duration: 0.35)) { position = Double(new) }
+        }
+    }
+
+    /// A view placed behind SwiftUI content never wins the hit test, so an
+    /// `NSView` subclass overriding `scrollWheel` was never called. A local
+    /// event monitor sees the events regardless of the view hierarchy, and the
+    /// panel covers the window while it is open, so consuming them is safe.
+    private func startScrollMonitor() {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            let delta = event.hasPreciseScrollingDeltas
+                ? event.scrollingDeltaY
+                : event.scrollingDeltaY * 8
+            turn(by: -Double(delta) / rowHeight)
+            return nil
         }
     }
 
@@ -138,36 +163,5 @@ struct OptionWheelList: View {
         }
         snapWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.14, execute: work)
-    }
-}
-
-/// SwiftUI has no scroll-wheel modifier on macOS, so this hands the deltas over
-/// from an AppKit view sitting behind the wheel.
-struct ScrollCatcher: NSViewRepresentable {
-    let onScroll: (CGFloat) -> Void
-
-    func makeNSView(context: Context) -> NSView { CatcherView(onScroll: onScroll) }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        (nsView as? CatcherView)?.onScroll = onScroll
-    }
-
-    final class CatcherView: NSView {
-        var onScroll: (CGFloat) -> Void
-
-        init(onScroll: @escaping (CGFloat) -> Void) {
-            self.onScroll = onScroll
-            super.init(frame: .zero)
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) { fatalError("not used") }
-
-        override func scrollWheel(with event: NSEvent) {
-            let delta = event.hasPreciseScrollingDeltas
-                ? event.scrollingDeltaY
-                : event.scrollingDeltaY * 8
-            onScroll(delta)
-        }
     }
 }

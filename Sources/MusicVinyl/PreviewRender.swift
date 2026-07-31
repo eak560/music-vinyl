@@ -28,10 +28,12 @@ enum PreviewRender {
             Pump.drain(0.4)
             print("state: playlists=\(library.playlists.count) tracks=\(library.tracks.count) " +
                   "covers=\(library.artwork.count) selected=\(library.selected?.name ?? "-")")
+            let dims = (ProcessInfo.processInfo.environment["PREVIEW_SIZE"] ?? "380x430")
+                .split(separator: "x").compactMap { Double($0) }
             let scene = PlaylistPanel(library: library, onClose: {})
                 .environmentObject(model)
                 .padding(10)
-                .frame(width: 380, height: 430)
+                .frame(width: dims.first ?? 380, height: dims.last ?? 430)
                 .background(Color(white: 0.1))
             let renderer = ImageRenderer(content: scene)
             renderer.scale = 2

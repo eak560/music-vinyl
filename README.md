@@ -46,9 +46,11 @@ reads the current track. Deny it and the record will just sit still.
   from the current cover, so the browser belongs to whatever is playing.
 - **Tracks** appear on a selector wheel curved around the left edge — the
   entry in the middle is sharp and bright, its neighbours fade and blur as
-  they curl away. Scroll, drag or click to turn it; clicking plays. Next and
-  previous then move through that list, and the playlist a song is playing
-  from is shown under the artist.
+  they curl away. Scroll, drag or click to turn it; clicking plays. Whenever
+  the panel is wide enough, the cover of whatever the wheel is passing over
+  sits alongside it and cross-fades as you go. Next and previous then move
+  through that list, and the playlist a song is playing from is shown under
+  the artist.
 - **Full screen** with ⌃⌘F, or from the right-click menu. The record scales
   up, the glass background squares off its corners, and always-on-top steps
   aside for the duration.
@@ -214,8 +216,17 @@ The wheel places entries on a circle whose radius keeps the arc between
 neighbours exactly one row tall, so the tilt angle controls how tightly it
 curls. Only entries within seven steps of the middle are built; past that they
 are transparent anyway, and a several-hundred-track playlist would otherwise
-lay out every row. SwiftUI has no scroll-wheel modifier on macOS, so a small
-`NSView` behind the wheel forwards `scrollWheel` deltas.
+lay out every row.
+
+SwiftUI has no scroll-wheel modifier on macOS. An `NSView` behind the wheel
+overriding `scrollWheel` was tried first and never fired — a view placed
+behind SwiftUI content does not win the hit test, so the events went to the
+content instead. A local `NSEvent` monitor sees them regardless of the view
+hierarchy, and the panel covers the window while it is open, so consuming
+them is safe.
+
+In full screen the panel is capped rather than stretched to the display:
+filling a 1512pt screen with a list left it mostly empty.
 
 ### Media keys
 

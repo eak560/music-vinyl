@@ -16,11 +16,17 @@ struct ContentView: View {
             .overlay {
                 if showingPlaylists {
                     PlaylistPanel(library: library) { withAnimation { showingPlaylists = false } }
-                        .padding(isFullScreen ? 60 : 10)
+                        // Capped rather than filling the display: stretched over
+                        // a full screen the panel is mostly empty.
+                        .frame(maxWidth: isFullScreen ? 940 : .infinity,
+                               maxHeight: isFullScreen ? 580 : .infinity)
+                        .padding(isFullScreen ? 24 : 10)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else if showingSettings {
                     SettingsPanel { withAnimation { showingSettings = false } }
-                        .padding(isFullScreen ? 60 : 10)
+                        .frame(maxWidth: isFullScreen ? 420 : .infinity,
+                               maxHeight: isFullScreen ? 460 : .infinity)
+                        .padding(isFullScreen ? 24 : 10)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
