@@ -11,6 +11,10 @@ enum Defaults {
         UserDefaults.standard.object(forKey: key) as? Bool ?? fallback
     }
 
+    static func string(_ key: String, _ fallback: String) -> String {
+        UserDefaults.standard.string(forKey: key) ?? fallback
+    }
+
     static func set(_ value: Any, _ key: String) {
         UserDefaults.standard.set(value, forKey: key)
     }

@@ -80,32 +80,59 @@ struct PlaylistPanel: View {
         .padding(.vertical, 10)
     }
 
+    /// ImageRenderer does not materialise ScrollView content, so the dev render
+    /// flag bypasses the scroll view to check row layout.
+    private static let rendersFlat = ProcessInfo.processInfo.environment["VINYL_NO_SCROLL"] != nil
+
+    @ViewBuilder
     private var list: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                if let selected = library.selected {
+        if Self.rendersFlat {
+            listBody
+        } else {
+            ScrollView { listBody }.scrollIndicators(.automatic)
+        }
+    }
+
+    private var listBody: some View {
+        Group {
+            if let selected = library.selected {
+                // Tracks are shown as a leaning stack of sleeves rather than
+                // text rows — the cover is the thing worth recognising.
+                LazyVStack(spacing: -34) {
                     ForEach(library.tracks) { track in
-                        row(title: track.title,
-                            subtitle: track.artist,
-                            highlighted: isNowPlaying(track)) {
+                        SleeveCard(
+                            title: track.title,
+                            artist: track.artist,
+                            artwork: library.artwork[track.id],
+                            playing: isNowPlaying(track)
+                        ) {
                             MusicBridge.shared.playTrack(at: track.id, inPlaylistWithID: selected.id)
                             refreshSoon()
                         }
-                    }
-                } else {
-                    ForEach(library.playlists) { playlist in
-                        row(title: playlist.name,
-                            subtitle: nil,
-                            highlighted: playlist.name == model.track.playlist,
-                            trailing: "chevron.right") {
-                            library.select(playlist)
-                        }
+                        .onAppear { library.requestArtwork(for: track) }
                     }
                 }
+                .padding(.top, 26)
+                .padding(.bottom, 40)
+                .padding(.horizontal, 14)
+            } else {
+                playlistRows
             }
-            .padding(.vertical, 4)
         }
-        .scrollIndicators(.automatic)
+    }
+
+    private var playlistRows: some View {
+        LazyVStack(spacing: 0) {
+            ForEach(library.playlists) { playlist in
+                row(title: playlist.name,
+                    subtitle: nil,
+                    highlighted: playlist.name == model.track.playlist,
+                    trailing: "chevron.right") {
+                    library.select(playlist)
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     private func isNowPlaying(_ track: PlaylistTrack) -> Bool {
@@ -163,5 +190,88 @@ private struct RowButtonStyle: ButtonStyle {
                     .fill(.white.opacity(configuration.isPressed ? 0.16 : (hovering ? 0.08 : 0)))
             )
             .onHover { hovering = $0 }
+    }
+}
+
+/// One record in the leaning stack: the cover, tilted back in perspective, with
+/// a title strip across it.
+private struct SleeveCard: View {
+    let title: String
+    let artist: String
+    let artwork: NSImage?
+    let playing: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            // The cover goes in the background rather than a ZStack layer: at
+            // .fill it overflows, and a ZStack would size itself to the
+            // overflowing image, pushing the strip outside the visible crop.
+            VStack(spacing: 0) {
+                strip
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 128)
+            .background { cover }
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(.white.opacity(playing ? 0.7 : 0.16), lineWidth: playing ? 1.5 : 0.8)
+            )
+            .shadow(color: .black.opacity(0.55), radius: 9, y: 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // Laid back like sleeves in a crate. Hovering lifts one out.
+        .rotation3DEffect(
+            .degrees(hovering ? 40 : 54),
+            axis: (x: 1, y: 0, z: 0),
+            anchor: .center,
+            perspective: 0.62
+        )
+        .scaleEffect(hovering ? 1.04 : 1)
+        .zIndex(hovering ? 1 : 0)
+        .animation(.easeOut(duration: 0.18), value: hovering)
+        .onHover { hovering = $0 }
+    }
+
+    @ViewBuilder
+    private var cover: some View {
+        if let artwork {
+            Image(nsImage: artwork)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(maxWidth: .infinity)
+        } else {
+            LinearGradient(
+                colors: [Color(white: 0.26), Color(white: 0.14)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+        }
+    }
+
+    private var strip: some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.system(size: 13, weight: .bold))
+                .lineLimit(1)
+            Text(artist)
+                .font(.system(size: 12))
+                .opacity(0.8)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            if playing {
+                Image(systemName: "speaker.wave.2.fill").font(.system(size: 10))
+            }
+        }
+        .foregroundStyle(.white)
+        .shadow(color: .black.opacity(0.9), radius: 2, y: 1)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.black.opacity(0.42))
     }
 }

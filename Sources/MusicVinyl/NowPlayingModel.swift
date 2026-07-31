@@ -36,6 +36,11 @@ final class NowPlayingModel: ObservableObject {
     @Published var glassBackground: Bool = Defaults.bool("glassBackground", false) {
         didSet { Defaults.set(glassBackground, "glassBackground") }
     }
+    /// How the record is drawn — classic vinyl, picture disc, or clear.
+    @Published var discStyle: DiscStyle =
+        DiscStyle(rawValue: Defaults.string("discStyle", DiscStyle.classic.rawValue)) ?? .classic {
+        didSet { Defaults.set(discStyle.rawValue, "discStyle") }
+    }
     /// Representative colours of the current cover, tinting that background.
     @Published private(set) var palette: [Color] = []
 

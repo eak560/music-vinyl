@@ -11,6 +11,7 @@ struct PlaylistTrack: Identifiable, Equatable {
     var id: Int
     var title: String
     var artist: String
+    var album: String
 }
 
 /// Reads the user's playlists out of Music.app and starts playback from them.
@@ -24,6 +25,10 @@ final class PlaylistLibrary: ObservableObject {
     @Published private(set) var tracks: [PlaylistTrack] = []
     @Published private(set) var isLoading = false
     @Published var selected: MusicPlaylist?
+    /// Covers for the rows on screen, filled in as they scroll into view —
+    /// fetching every track's art up front would mean hundreds of lookups.
+    @Published private(set) var artwork: [Int: NSImage] = [:]
+    private var requested: Set<Int> = []
 
     private var hasLoaded = false
 
@@ -45,6 +50,8 @@ final class PlaylistLibrary: ObservableObject {
     func select(_ playlist: MusicPlaylist) {
         selected = playlist
         tracks = []
+        artwork = [:]
+        requested = []
         isLoading = true
         MusicBridge.shared.fetchTracks(inPlaylistWithID: playlist.id) { [weak self] result in
             guard let self, self.selected?.id == playlist.id else { return }
@@ -56,6 +63,25 @@ final class PlaylistLibrary: ObservableObject {
     func deselect() {
         selected = nil
         tracks = []
+        artwork = [:]
+        requested = []
+    }
+
+    /// Asks for one row's cover. Cheap to call repeatedly: already-requested
+    /// rows are skipped, and CatalogArtwork dedupes by album underneath, so a
+    /// playlist that walks one record does a single lookup.
+    func requestArtwork(for track: PlaylistTrack) {
+        guard !requested.contains(track.id) else { return }
+        requested.insert(track.id)
+        var probe = Track()
+        probe.title = track.title
+        probe.artist = track.artist
+        probe.album = track.album
+        probe.id = "playlist-\(selected?.id ?? "")-\(track.id)"
+        CatalogArtwork.shared.fetchArtwork(for: probe) { [weak self] image in
+            guard let self, let image else { return }
+            self.artwork[track.id] = image
+        }
     }
 }
 
@@ -98,11 +124,13 @@ extension MusicBridge {
         runScript("""
         tell application id "com.apple.Music"
             set theList to (first playlist whose persistent ID is "\(escape(id))")
-            return {(name of every track of theList), (artist of every track of theList)}
+            return {(name of every track of theList), (artist of every track of theList), ¬
+                    (album of every track of theList)}
         end tell
         """) { result in
-            guard let result, result.numberOfItems >= 2,
-                  let titles = result.atIndex(1), let artists = result.atIndex(2)
+            guard let result, result.numberOfItems >= 3,
+                  let titles = result.atIndex(1), let artists = result.atIndex(2),
+                  let albums = result.atIndex(3)
             else {
                 completion([])
                 return
@@ -113,7 +141,8 @@ extension MusicBridge {
                 tracks.append(
                     PlaylistTrack(id: index,
                                   title: title,
-                                  artist: artists.atIndex(index)?.stringValue ?? "")
+                                  artist: artists.atIndex(index)?.stringValue ?? "",
+                                  album: albums.atIndex(index)?.stringValue ?? "")
                 )
             }
             completion(tracks)

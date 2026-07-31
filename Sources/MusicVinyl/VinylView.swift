@@ -12,6 +12,7 @@ struct VinylView: View {
     /// The cover being replaced, and how far the blend between them has run.
     var previousArtwork: NSImage? = nil
     var artworkFade: Double = 1
+    var style: DiscStyle = .classic
 
     /// The platter takes up less than the full square so the tonearm pivot has
     /// somewhere to live outside the record.
@@ -21,7 +22,33 @@ struct VinylView: View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height) * Self.discScale
             ZStack {
-                DiscBody(side: side).equatable()
+                switch style {
+                case .classic:
+                    DiscBody(side: side).equatable()
+                case .picture:
+                    // Cover across the whole face, with the grooves cut over it.
+                    coverFace(side: side)
+                        .clipShape(Circle())
+                        .rotationEffect(.degrees(angle))
+                    Grooves(side: side, style: style).equatable()
+                case .glass:
+                    // Clear pressing: the cover sits under a translucent disc,
+                    // so it reads as tinted rather than printed.
+                    coverFace(side: side)
+                        .clipShape(Circle())
+                        .rotationEffect(.degrees(angle))
+                        .opacity(0.34)
+                        .saturation(0.75)
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [.white.opacity(0.16), .white.opacity(0.05), .white.opacity(0.22)],
+                                center: .topLeading, startRadius: 0, endRadius: side
+                            )
+                        )
+                    Grooves(side: side, style: style).equatable()
+                    Circle().strokeBorder(.white.opacity(0.35), lineWidth: max(0.6, side * 0.004))
+                }
 
                 // Rotating sheen — a faint bright wedge sweeping the surface.
                 Circle()
@@ -37,16 +64,18 @@ struct VinylView: View {
                     .rotationEffect(.degrees(angle))
                     .blendMode(.screen)
 
-                LabelView(
-                    artwork: artwork,
-                    previousArtwork: previousArtwork,
-                    fade: artworkFade,
-                    side: side,
-                    title: title,
-                    artist: artist
-                )
-                .frame(width: side * 0.34, height: side * 0.34)
-                .rotationEffect(.degrees(angle))
+                if style == .classic {
+                    LabelView(
+                        artwork: artwork,
+                        previousArtwork: previousArtwork,
+                        fade: artworkFade,
+                        side: side,
+                        title: title,
+                        artist: artist
+                    )
+                    .frame(width: side * 0.34, height: side * 0.34)
+                    .rotationEffect(.degrees(angle))
+                }
 
                 // Fixed highlight from a light above-left, plus the spindle.
                 Circle()
@@ -71,6 +100,69 @@ struct VinylView: View {
             .shadow(color: .black.opacity(0.55), radius: side * 0.045, x: 0, y: side * 0.018)
         }
         .aspectRatio(1, contentMode: .fit)
+    }
+
+    /// The cover, cross-faded, sized to cover the whole disc. Used by the
+    /// picture and clear styles, where the art is the record rather than a
+    /// label stuck to it.
+    @ViewBuilder
+    private func coverFace(side: CGFloat) -> some View {
+        ZStack {
+            Color(white: 0.08)
+            cover(previousArtwork, side: side)
+            cover(artwork, side: side).opacity(artworkFade)
+        }
+    }
+
+    @ViewBuilder
+    private func cover(_ image: NSImage?, side: CGFloat) -> some View {
+        if let image {
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: side, height: side)
+        }
+    }
+}
+
+/// Groove rings drawn over whatever face is underneath. Rotationally symmetric,
+/// so they never need to turn.
+private struct Grooves: View, Equatable {
+    let side: CGFloat
+    let style: DiscStyle
+
+    var body: some View {
+        Canvas(rendersAsynchronously: false) { ctx, size in
+            let radius = min(size.width, size.height) / 2
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            func circle(_ r: CGFloat) -> Path {
+                Path(ellipseIn: CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))
+            }
+
+            let inner = radius * 0.20
+            let outer = radius * 0.965
+            let line = max(0.5, radius * 0.0035)
+            // On a printed face the grooves read as shadow; on a clear one they
+            // catch the light instead.
+            let dark = style == .picture
+            for i in 0..<130 {
+                let f = Double(i) / 129
+                let r = inner + (outer - inner) * f
+                let strength = 0.05 + 0.06 * abs(sin(f * 26))
+                ctx.stroke(circle(r),
+                           with: .color(dark ? .black.opacity(strength) : .white.opacity(strength)),
+                           lineWidth: line)
+            }
+            for f in [0.18, 0.37, 0.55, 0.72, 0.88] as [Double] {
+                let r = inner + (outer - inner) * f
+                ctx.stroke(circle(r), with: .color(.black.opacity(0.28)), lineWidth: line * 2.4)
+            }
+            ctx.stroke(circle(radius * 0.985), with: .color(.white.opacity(0.18)), lineWidth: line * 1.4)
+        }
+    }
+
+    static func == (lhs: Grooves, rhs: Grooves) -> Bool {
+        lhs.side == rhs.side && lhs.style == rhs.style
     }
 }
 

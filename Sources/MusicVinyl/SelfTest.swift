@@ -145,13 +145,18 @@ enum SelfTest {
         print("\(passed ? "PASS" : "FAIL")  \(label)\(suffix)")
     }
 
-    /// Seeks are lossy — Music rounds, and the last coalesced request wins — so
-    /// judge the scrub on whether it landed close, not exactly.
+    /// Seeks are lossy — Music rounds, the last coalesced request wins, and its
+    /// reported position keeps settling for a moment afterwards — so judge the
+    /// scrub on whether it landed close, not exactly. Half a second is well
+    /// inside one revolution (1.8s at 33⅓ RPM), so a genuinely broken scrub,
+    /// which would be out by seconds, still fails.
+    private static let driftTolerance = 0.5
+
     private static func report(_ label: String, expected: Double, model: Double, music: Double) {
         let drift = abs(music - expected)
-        if drift > 0.35 { failures += 1 }
+        if drift > Self.driftTolerance { failures += 1 }
         print(String(format: "%@  %@: expected %@  model %@  music %@  (drift %.2fs)",
-                     drift <= 0.35 ? "PASS" : "FAIL", label,
+                     drift <= Self.driftTolerance ? "PASS" : "FAIL", label,
                      fmt(expected), fmt(model), fmt(music), drift))
     }
 

@@ -20,15 +20,39 @@ enum PreviewRender {
                let first = library.playlists.first(where: { $0.name.count > 4 }) ?? library.playlists.first {
                 library.select(first)
                 Pump.wait(timeout: 10) { !library.tracks.isEmpty }
+                // onAppear does not fire under ImageRenderer, so ask for the
+                // covers the same way a scrolling list would.
+                for track in library.tracks.prefix(8) { library.requestArtwork(for: track) }
+                Pump.wait(timeout: 25) { library.artwork.count >= min(library.tracks.count, 6) }
             }
             Pump.drain(0.4)
             print("state: playlists=\(library.playlists.count) tracks=\(library.tracks.count) " +
-                  "loading=\(library.isLoading) selected=\(library.selected?.name ?? "-")")
+                  "covers=\(library.artwork.count) selected=\(library.selected?.name ?? "-")")
             let scene = PlaylistPanel(library: library, onClose: {})
                 .environmentObject(model)
                 .padding(10)
                 .frame(width: 380, height: 430)
                 .background(Color(white: 0.1))
+            let renderer = ImageRenderer(content: scene)
+            renderer.scale = 2
+            guard let cg = renderer.cgImage,
+                  let data = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])
+            else { exit(1) }
+            try? data.write(to: URL(fileURLWithPath: path))
+            print("wrote \(path)")
+            exit(0)
+        }
+        if let flag = args.firstIndex(of: "--render-chrome") {
+            let path = args.count > flag + 1 ? args[flag + 1] : "chrome.png"
+            let model = NowPlayingModel()
+            Pump.drain(1.0)
+            let scene = VStack(spacing: 22) {
+                RetroTransport(onPlaylists: {}, onSettings: {})
+                SettingsPanel(onClose: {}).frame(width: 320, height: 300)
+            }
+            .environmentObject(model)
+            .padding(20)
+            .background(Color(white: 0.12))
             let renderer = ImageRenderer(content: scene)
             renderer.scale = 2
             guard let cg = renderer.cgImage,
@@ -148,6 +172,7 @@ enum PreviewRender {
         let outgoingArt = ProcessInfo.processInfo.environment["PREVIEW_ART2"]
             .flatMap { NSImage(contentsOfFile: $0) }
         let fade = Double(ProcessInfo.processInfo.environment["PREVIEW_FADE"] ?? "") ?? 1
+        let discStyle = DiscStyle(rawValue: ProcessInfo.processInfo.environment["PREVIEW_DISC"] ?? "") ?? .classic
         // PREVIEW_ARM=off shows the tonearm swung clear, as when it is lifted.
         let armEngaged = ProcessInfo.processInfo.environment["PREVIEW_ARM"] != "off"
 
@@ -170,7 +195,8 @@ enum PreviewRender {
                     title: "Midnight Ride",
                     artist: "The Long Players",
                     previousArtwork: outgoingArt,
-                    artworkFade: fade
+                    artworkFade: fade,
+                    style: discStyle
                 )
                 TonearmView(progress: progress, engaged: armEngaged, onTap: {})
             }

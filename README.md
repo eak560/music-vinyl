@@ -26,6 +26,15 @@ reads the current track. Deny it and the record will just sit still.
 - **Drag the window background** to move it. There is no title bar.
 - **Hover** anywhere over the window for play/pause and skip, below the track
   name. They fade rather than appear, so nothing above them shifts.
+- **Disc style** in Turntable settings: classic vinyl with the cover as a
+  centre label, a picture disc where the cover fills the whole record, or a
+  clear pressing you can see the cover through.
+- **Speed** is a continuous slider from 5 to 120 RPM, with 33⅓ / 45 / 78
+  presets. It drives the scrub ratio too, so a turn of the record always
+  moves the song by one revolution's worth of audio.
+- **Transport** is a cassette deck's: cream keys in a dark housing that
+  travel when pressed, with the glyphs drawn as shapes rather than set in a
+  symbol font.
 - **Right-click** for always-on-top, track info, the glass background, online
   artwork lookup, and turntable speed (33⅓ / 45 / 78 RPM — 33⅓ is the real
   speed, and it is fast).
@@ -48,7 +57,10 @@ reads the current track. Deny it and the record will just sit still.
 | `MusicBridge.swift` | Apple events to Music.app: track info, artwork, transport |
 | `CatalogArtwork.swift` | Online cover lookup for streaming tracks |
 | `PlaylistLibrary.swift` | Reads playlists and their tracks out of Music |
-| `PlaylistPanel.swift` | The playlist browser |
+| `PlaylistPanel.swift` | The playlist browser and its leaning sleeve stack |
+| `RetroTransport.swift` | Cassette-deck transport keys |
+| `SettingsPanel.swift` | Disc style, speed, and window toggles |
+| `DiscStyle.swift` | Which of the three records is drawn |
 | `Palette.swift` | Pulls representative colours out of the cover art |
 | `GlassBackground.swift` | The animated colour field behind the record |
 | `NowPlayingModel.swift` | Polls state, derives rotation angle from wall-clock time |
@@ -212,7 +224,8 @@ checked without launching a window:
   answered, and how long the online lookup took, then exit.
 - `--render-preview out.png` — render the record offscreen to a PNG.
   `PREVIEW_ANGLE`, `PREVIEW_PROGRESS`, `PREVIEW_NOART=1`, `PREVIEW_ARM=off`,
-  `PREVIEW_ART=cover.jpg`, `PREVIEW_GLASS=1`, and `PREVIEW_ART2` +
+  `PREVIEW_ART=cover.jpg`, `PREVIEW_GLASS=1`, `PREVIEW_DISC=picture|glass`,
+  and `PREVIEW_ART2` +
   `PREVIEW_FADE=0.5` (to see the cover blend mid-way) control the frame.
 - `--render-layout out.png` — render the window layout at `PREVIEW_SIZE=WxH`.
   Used to check that the background fills a wide window rather than just the
@@ -224,8 +237,12 @@ checked without launching a window:
   track that isn't playing. `DUMP_ARTWORK=path` writes the cover it found.
 - `--playlists` — list playlists and the tracks of the first one.
 - `--render-playlists out.png` — render the playlist panel with the real
-  library. Note `ImageRenderer` does not materialise `ScrollView` content, so
-  the rows come out blank; that is the renderer, not the panel.
+  library. `PREVIEW_TRACKS=1` opens a playlist.
+- `--render-chrome out.png` — render the transport keys and settings panel.
+- `VINYL_NO_SCROLL=1` — lay panels out flat for the renders above.
+  `ImageRenderer` does not materialise `ScrollView` content, and renders
+  AppKit-backed controls (`Picker`, `Slider`, `Toggle`) as yellow
+  placeholders. Both are the renderer, not the views.
 - `--selftest` — drive the tonearm and scrub handlers against a live Music.app
   and report pass/fail, then restore the playback state it started with. The
   gestures need a mouse to exercise otherwise. `VINYL_TRACE=1` adds a

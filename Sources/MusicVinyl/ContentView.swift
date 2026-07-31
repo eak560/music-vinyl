@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var dragAngle: Double?
     @State private var isFullScreen = false
     @State private var showingPlaylists = false
+    @State private var showingSettings = false
     @StateObject private var library = PlaylistLibrary()
 
     var body: some View {
@@ -17,14 +18,29 @@ struct ContentView: View {
                     PlaylistPanel(library: library) { withAnimation { showingPlaylists = false } }
                         .padding(isFullScreen ? 60 : 10)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else if showingSettings {
+                    SettingsPanel { withAnimation { showingSettings = false } }
+                        .padding(isFullScreen ? 60 : 10)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
             .animation(.easeOut(duration: 0.22), value: showingPlaylists)
+            .animation(.easeOut(duration: 0.22), value: showingSettings)
     }
 
     private func togglePlaylists() {
         library.loadIfNeeded()
-        withAnimation { showingPlaylists.toggle() }
+        withAnimation {
+            showingSettings = false
+            showingPlaylists.toggle()
+        }
+    }
+
+    private func toggleSettings() {
+        withAnimation {
+            showingPlaylists = false
+            showingSettings.toggle()
+        }
     }
 
     private var mainContent: some View {
@@ -42,7 +58,8 @@ struct ContentView: View {
                             title: model.track.title,
                             artist: model.track.artist,
                             previousArtwork: model.previousArtwork,
-                            artworkFade: model.artworkFade(at: context.date)
+                            artworkFade: model.artworkFade(at: context.date),
+                            style: model.discStyle
                         )
                     }
 
@@ -66,7 +83,7 @@ struct ContentView: View {
 
             // Always laid out, only faded — appearing and disappearing would
             // resize everything above it on every hover.
-            TransportControls(onPlaylists: togglePlaylists)
+            RetroTransport(onPlaylists: togglePlaylists, onSettings: toggleSettings)
                 .opacity(controlsVisible ? 1 : 0)
                 .scaleEffect(controlsVisible ? 1 : 0.96)
                 .allowsHitTesting(controlsVisible)
@@ -189,6 +206,7 @@ struct ContentView: View {
         Toggle("Look Up Artwork Online", isOn: $model.onlineArtwork)
         Divider()
         Button(showingPlaylists ? "Hide Playlists" : "Show Playlists") { togglePlaylists() }
+        Button(showingSettings ? "Hide Turntable Settings" : "Turntable Settings…") { toggleSettings() }
         Button(isFullScreen ? "Exit Full Screen" : "Enter Full Screen") {
             WindowConfigurator.toggleFullScreen()
         }
@@ -200,38 +218,6 @@ struct ContentView: View {
         Divider()
         Button("Open Music") { MusicBridge.shared.activateMusic() }
         Button("Quit") { NSApp.terminate(nil) }
-    }
-}
-
-/// Play/pause and skip, revealed on hover over the record.
-private struct TransportControls: View {
-    @EnvironmentObject private var model: NowPlayingModel
-    let onPlaylists: () -> Void
-
-    var body: some View {
-        HStack(spacing: 18) {
-            button("backward.fill") { model.previous() }
-            button(model.state.isPlaying ? "pause.fill" : "play.fill", size: 22) { model.playPause() }
-            button("forward.fill") { model.next() }
-            Divider().frame(height: 18).overlay(.white.opacity(0.2))
-            button("music.note.list", size: 15, action: onPlaylists)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
-        .shadow(color: .black.opacity(0.4), radius: 10, y: 3)
-    }
-
-    private func button(_ symbol: String, size: CGFloat = 17, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: size, weight: .medium))
-                .foregroundStyle(.white)
-                .frame(width: size + 12, height: size + 12)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 }
 
