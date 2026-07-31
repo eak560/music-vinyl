@@ -153,9 +153,17 @@ extension MusicBridge {
         perform("play (first playlist whose persistent ID is \"\(escape(id))\")")
     }
 
-    /// Plays one track *within* its playlist, so what follows is the rest of it.
-    func playTrack(at index: Int, inPlaylistWithID id: String) {
-        perform("play (track \(index) of (first playlist whose persistent ID is \"\(escape(id))\"))")
+    /// Plays one track out of a playlist.
+    ///
+    /// Note this leaves Music with *no* current playlist — verified: after it,
+    /// `name of current playlist` fails with -1728 and `next track` silently
+    /// does nothing. Referencing the playlist by name or as a `user playlist`,
+    /// revealing the track first, and playing the playlist beforehand were all
+    /// tried; every form that plays a track object drops the context. So the
+    /// model keeps its own queue instead — see `NowPlayingModel.playFromQueue`.
+    func playTrack(at index: Int, inPlaylistWithID id: String, completion: (() -> Void)? = nil) {
+        perform("play (track \(index) of (first playlist whose persistent ID is \"\(escape(id))\"))",
+                completion: completion)
     }
 
     /// Persistent IDs are hex, but never build a script out of unescaped text.

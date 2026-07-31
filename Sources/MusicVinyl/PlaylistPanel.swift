@@ -61,7 +61,7 @@ struct PlaylistPanel: View {
 
             if let selected = library.selected {
                 Button {
-                    MusicBridge.shared.playPlaylist(id: selected.id)
+                    model.playPlaylist(id: selected.id)
                     refreshSoon()
                 } label: {
                     Image(systemName: "play.fill").font(.system(size: 11, weight: .semibold))
@@ -106,7 +106,9 @@ struct PlaylistPanel: View {
                             artwork: library.artwork[track.id],
                             playing: isNowPlaying(track)
                         ) {
-                            MusicBridge.shared.playTrack(at: track.id, inPlaylistWithID: selected.id)
+                            model.playFromQueue(playlistID: selected.id,
+                                                index: track.id,
+                                                count: library.tracks.count)
                             refreshSoon()
                         }
                         .onAppear { library.requestArtwork(for: track) }

@@ -62,6 +62,8 @@ enum PreviewRender {
             print("wrote \(path)")
             exit(0)
         }
+        // Exercises the queue: pick a track out of a playlist, then next/prev.
+        if args.contains("--queue-test") { QueueTest.run() }
         if args.contains("--playlists") {
             var lists: [MusicPlaylist]?
             MusicBridge.shared.fetchPlaylists { lists = $0 }

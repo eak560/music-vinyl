@@ -50,6 +50,9 @@ final class NowPlayingModel: ObservableObject {
         didSet { Defaults.set(onlineArtwork, "onlineArtwork") }
     }
 
+    /// Set while playback is being driven from the playlist browser.
+    @Published private(set) var queue: Queue?
+
     /// True while the user is holding the record.
     @Published private(set) var isScrubbing = false
     /// Rotation contributed by dragging, on top of the free-running spin.
@@ -145,6 +148,13 @@ final class NowPlayingModel: ObservableObject {
 
         state = snapshot.state
         track = snapshot.track
+
+        // Deliberately no auto-advance here. Carrying the queue forward on a
+        // stopped snapshot was tried and ran away: Music reports `stopped`
+        // briefly *during* a track switch too, which is indistinguishable from
+        // reaching the end, so each advance triggered the next and the queue
+        // galloped from track 3 to 9 on its own. Ending a track picked from the
+        // browser therefore stops rather than continuing the list.
 
         if wasPlaying != state.isPlaying {
             setSpinning(state.isPlaying)
@@ -343,7 +353,19 @@ final class NowPlayingModel: ObservableObject {
         }
     }
 
-    private enum Transport { case play, pause, playPause, next, previous }
+    /// Where playback came from when the user picked a track out of a
+    /// playlist. Music forgets the playlist in that case, so this is what
+    /// makes next and previous work afterwards.
+    struct Queue {
+        var playlistID: String
+        var index: Int
+        var count: Int
+    }
+
+    private enum Transport {
+        case play, pause, playPause, next, previous
+        case queued(playlistID: String, index: Int)
+    }
 
     /// Sends a transport command, shows its effect immediately, and ignores
     /// polling until Music confirms — then re-reads the truth.
@@ -371,6 +393,8 @@ final class NowPlayingModel: ObservableObject {
         case .playPause: MusicBridge.shared.playPause(completion: acknowledged)
         case .next: MusicBridge.shared.nextTrack(completion: acknowledged)
         case .previous: MusicBridge.shared.previousTrack(completion: acknowledged)
+        case let .queued(playlistID, index):
+            MusicBridge.shared.playTrack(at: index, inPlaylistWithID: playlistID, completion: acknowledged)
         }
     }
 
@@ -403,7 +427,40 @@ final class NowPlayingModel: ObservableObject {
         issue(.playPause, optimistic: state.isPlaying ? .paused : .playing)
     }
 
-    func next() { issue(.next, optimistic: nil) }
+    /// Plays a whole playlist, which gives Music a context it can advance
+    /// through on its own — so the stand-in queue is dropped.
+    func playPlaylist(id: String) {
+        queue = nil
+        MusicBridge.shared.playPlaylist(id: id)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.refresh() }
+    }
 
-    func previous() { issue(.previous, optimistic: nil) }
+    /// Starts a track from the playlist browser and remembers where it came
+    /// from, so the rest of the list stays reachable.
+    ///
+    /// Note the queue is *not* dropped when Music reports a current playlist:
+    /// after picking a lone track it names one (e.g. "Music Videos") while
+    /// still refusing to advance, so its having a playlist proves nothing.
+    func playFromQueue(playlistID: String, index: Int, count: Int) {
+        queue = Queue(playlistID: playlistID, index: index, count: count)
+        issue(.queued(playlistID: playlistID, index: index), optimistic: .playing)
+    }
+
+    func next() {
+        // Music's own next track is a no-op when it has no current playlist,
+        // which is exactly the state picking a track out of one leaves it in.
+        if let queue, queue.index < queue.count {
+            playFromQueue(playlistID: queue.playlistID, index: queue.index + 1, count: queue.count)
+        } else {
+            issue(.next, optimistic: nil)
+        }
+    }
+
+    func previous() {
+        if let queue, queue.index > 1 {
+            playFromQueue(playlistID: queue.playlistID, index: queue.index - 1, count: queue.count)
+        } else {
+            issue(.previous, optimistic: nil)
+        }
+    }
 }

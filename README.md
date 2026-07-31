@@ -41,8 +41,8 @@ reads the current track. Deny it and the record will just sit still.
 - **Glass Background** swaps the transparent window for a slow field of
   colour pulled from the current cover, under a frosted pane. Off by default.
 - **Playlists** from the hover controls or the right-click menu: your Music
-  playlists, and the tracks inside whichever one you open. Picking a track
-  plays it *within* its playlist, so the rest of the list follows. The
+  playlists, and the tracks inside whichever one you open, shown as a leaning
+  stack of sleeves. Next and previous then move through that list. The
   playlist a song is playing from is shown under the artist.
 - **Full screen** with ⌃⌘F, or from the right-click menu. The record scales
   up, the glass background squares off its corners, and always-on-top steps
@@ -169,6 +169,29 @@ That covers cover-to-cover, cover-to-printed-label and back with one path.
 The timeline keeps running through a blend even when playback is stopped, or
 it would freeze part-way.
 
+### Why the app keeps its own queue
+
+Playing a single track out of a playlist leaves Music unable to move on:
+`next track` and `back track` return without error and do nothing. Directly
+after such a play, `name of current playlist` fails outright with -1728; on
+other playlists Music *does* report a playlist name and still refuses to
+advance, so its having one proves nothing. Referencing the playlist by name,
+as a `user playlist`, revealing the track first, and playing the playlist
+before the track were all tried — every form that plays a track object drops
+the context, and `play theList` followed by skipping is unreliable because the
+skips fire before playback has started.
+
+So picking a track from the browser records the playlist and the index, and
+next/previous move within that. Playing a *whole* playlist gives Music a real
+context and drops the stand-in.
+
+One thing this does not do: **a track picked from the browser stops at the end
+rather than continuing the list.** Advancing automatically on a `stopped`
+snapshot was implemented and removed — Music also reports `stopped` briefly
+*during* a track change, which is indistinguishable from reaching the end, so
+each advance triggered the next and the queue galloped from track 3 to 9 on
+its own. Use the whole-playlist play button for continuous listening.
+
 ### Where the album art comes from
 
 Two sources, and which one leads depends on the track:
@@ -243,6 +266,8 @@ checked without launching a window:
   `ImageRenderer` does not materialise `ScrollView` content, and renders
   AppKit-backed controls (`Picker`, `Slider`, `Toggle`) as yellow
   placeholders. Both are the renderer, not the views.
+- `--queue-test` — pick a track out of a playlist the way the browser does,
+  then check that next and previous still move.
 - `--selftest` — drive the tonearm and scrub handlers against a live Music.app
   and report pass/fail, then restore the playback state it started with. The
   gestures need a mouse to exercise otherwise. `VINYL_TRACE=1` adds a
