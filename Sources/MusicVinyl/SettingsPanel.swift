@@ -95,6 +95,14 @@ struct SettingsPanel: View {
             Toggle("Show Track Info", isOn: $model.showTrackInfo)
             Toggle("Glass Background", isOn: $model.glassBackground)
             Toggle("Look Up Artwork Online", isOn: $model.onlineArtwork)
+            Toggle("Use Media Keys", isOn: $model.interceptMediaKeys)
+            if model.mediaKeysNeedPermission {
+                Button("Grant Accessibility…") { model.syncMediaKeyTap(promptIfNeeded: true) }
+                    .buttonStyle(PresetStyle(active: true))
+                Text("The ⏭ key needs Accessibility to reach the app.")
+                    .font(.system(size: 10))
+                    .opacity(0.55)
+            }
         }
         .toggleStyle(.switch)
         .controlSize(.mini)

@@ -64,6 +64,17 @@ enum PreviewRender {
         }
         // Exercises the queue: pick a track out of a playlist, then next/prev.
         if args.contains("--queue-test") { QueueTest.run() }
+        if args.contains("--mediakeys") {
+            let tap = MediaKeyTap.shared
+            print("accessibility granted: \(tap.hasAccessibilityPermission)")
+            let started = tap.start()
+            print("event tap installed: \(started)")
+            if !started {
+                print("  -> grant Accessibility to \"Music Vinyl\" in System Settings >")
+                print("     Privacy & Security > Accessibility, then relaunch.")
+            }
+            exit(started ? 0 : 1)
+        }
         if args.contains("--playlists") {
             var lists: [MusicPlaylist]?
             MusicBridge.shared.fetchPlaylists { lists = $0 }

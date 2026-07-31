@@ -192,6 +192,22 @@ snapshot was implemented and removed — Music also reports `stopped` briefly
 each advance triggered the next and the queue galloped from track 3 to 9 on
 its own. Use the whole-playlist play button for continuous listening.
 
+### Media keys
+
+The keyboard's ⏭ / ⏮ keys talk to Music directly, so they hit exactly the
+limitation above: a track picked from the browser is not something Music can
+advance past, and the keys appear dead while play/pause still works.
+
+**Use Media Keys** (Turntable settings, on by default) installs a
+`CGEventTap` on system-defined events and routes those two keys to the app's
+queue. It only swallows a key while the queue is active — the rest of the
+time, and always for play/pause, the event passes straight through to Music.
+
+It needs **Accessibility** permission (System Settings → Privacy & Security →
+Accessibility). Without it the tap refuses to install and the keys behave as
+before. Note the app is ad-hoc signed, so its identity changes every time you
+rebuild: after `./build.sh` you may have to remove and re-add it in that list.
+
 ### Where the album art comes from
 
 Two sources, and which one leads depends on the track:

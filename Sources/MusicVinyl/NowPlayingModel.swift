@@ -50,6 +50,15 @@ final class NowPlayingModel: ObservableObject {
         didSet { Defaults.set(onlineArtwork, "onlineArtwork") }
     }
 
+    /// Route the keyboard's ⏮ / ⏭ keys through the app so they can drive the
+    /// queue. Needs Accessibility, so it is opt-in.
+    @Published var interceptMediaKeys: Bool = Defaults.bool("interceptMediaKeys", true) {
+        didSet {
+            Defaults.set(interceptMediaKeys, "interceptMediaKeys")
+            syncMediaKeyTap()
+        }
+    }
+
     /// Set while playback is being driven from the playlist browser.
     @Published private(set) var queue: Queue?
 
@@ -94,6 +103,33 @@ final class NowPlayingModel: ObservableObject {
         )
         refresh()
         scheduleTimer(interval: 1.0)
+
+        MediaKeyTap.shared.onNext = { [weak self] in self?.next() }
+        MediaKeyTap.shared.onPrevious = { [weak self] in self?.previous() }
+        // Only take the keys when Music itself could not act on them; the rest
+        // of the time they belong to Music.
+        MediaKeyTap.shared.shouldIntercept = { [weak self] in self?.queue != nil }
+        // Ask up front when the feature is on: without Accessibility the keys
+        // silently do nothing, which is indistinguishable from a bug.
+        syncMediaKeyTap(promptIfNeeded: true)
+    }
+
+    /// Starts or stops the key tap to match the setting, prompting for
+    /// Accessibility the first time it is switched on.
+    func syncMediaKeyTap(promptIfNeeded: Bool = false) {
+        guard interceptMediaKeys else {
+            MediaKeyTap.shared.stop()
+            return
+        }
+        if promptIfNeeded && !MediaKeyTap.shared.hasAccessibilityPermission {
+            MediaKeyTap.shared.requestPermission()
+        }
+        MediaKeyTap.shared.start()
+    }
+
+    /// True when the keys are wanted but macOS has not granted access yet.
+    var mediaKeysNeedPermission: Bool {
+        interceptMediaKeys && !MediaKeyTap.shared.hasAccessibilityPermission
     }
 
     deinit {
@@ -121,6 +157,9 @@ final class NowPlayingModel: ObservableObject {
         // which the user feels as the record lagging their hand. The polls
         // would be discarded anyway, so don't issue them.
         guard !isScrubbing else { return }
+        // Accessibility may be granted while the app is already running; pick
+        // it up rather than making the user relaunch.
+        if interceptMediaKeys && !MediaKeyTap.shared.isRunning { syncMediaKeyTap() }
         MusicBridge.shared.fetchSnapshot { [weak self] snapshot in
             guard let self else { return }
             self.apply(snapshot)
