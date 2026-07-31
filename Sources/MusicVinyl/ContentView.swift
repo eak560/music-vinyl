@@ -80,13 +80,11 @@ struct ContentView: View {
                         )
                     }
 
-                    if ProcessInfo.processInfo.environment["VINYL_NO_ARM"] == nil {
-                        TonearmView(
-                            progress: model.progress,
-                            engaged: armEngaged,
-                            onTap: { model.toggleArm() }
-                        )
-                    }
+                    TonearmView(
+                        progress: model.progress,
+                        engaged: armEngaged,
+                        onTap: { model.toggleArm() }
+                    )
 
                 }
                 // Only the record itself responds to grabbing.
