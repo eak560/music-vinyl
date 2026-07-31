@@ -40,10 +40,15 @@ reads the current track. Deny it and the record will just sit still.
   speed, and it is fast).
 - **Glass Background** swaps the transparent window for a slow field of
   colour pulled from the current cover, under a frosted pane. Off by default.
-- **Playlists** from the hover controls or the right-click menu: your Music
-  playlists, and the tracks inside whichever one you open, shown as a leaning
-  stack of sleeves. Next and previous then move through that list. The
-  playlist a song is playing from is shown under the artist.
+- **Playlists** from the hover controls or the right-click menu. The list
+  responds to the cursor: labels slide out, warm toward the accent colour, and
+  the rule beside each one lengthens as you approach it. The accent is taken
+  from the current cover, so the browser belongs to whatever is playing.
+- **Tracks** appear on a selector wheel curved around the left edge — the
+  entry in the middle is sharp and bright, its neighbours fade and blur as
+  they curl away. Scroll, drag or click to turn it; clicking plays. Next and
+  previous then move through that list, and the playlist a song is playing
+  from is shown under the artist.
 - **Full screen** with ⌃⌘F, or from the right-click menu. The record scales
   up, the glass background squares off its corners, and always-on-top steps
   aside for the duration.
@@ -57,7 +62,9 @@ reads the current track. Deny it and the record will just sit still.
 | `MusicBridge.swift` | Apple events to Music.app: track info, artwork, transport |
 | `CatalogArtwork.swift` | Online cover lookup for streaming tracks |
 | `PlaylistLibrary.swift` | Reads playlists and their tracks out of Music |
-| `PlaylistPanel.swift` | The playlist browser and its leaning sleeve stack |
+| `PlaylistPanel.swift` | The playlist browser |
+| `LineSidebarList.swift` | Playlists, with the cursor-proximity rules |
+| `OptionWheelList.swift` | Tracks, on a curved selector wheel |
 | `RetroTransport.swift` | Cassette-deck transport keys |
 | `SettingsPanel.swift` | Disc style, speed, and window toggles |
 | `DiscStyle.swift` | Which of the three records is drawn |
@@ -191,6 +198,24 @@ snapshot was implemented and removed — Music also reports `stopped` briefly
 *during* a track change, which is indistinguishable from reaching the end, so
 each advance triggered the next and the queue galloped from track 3 to 9 on
 its own. Use the whole-playlist play button for continuous listening.
+
+### The two browser lists
+
+Both are SwiftUI reworkings of React components (React Bits' `LineSidebar` and
+`OptionWheel`), so the behaviour is reimplemented rather than ported.
+
+The sidebar reads the pointer once for the whole list with
+`onContinuousHover` and derives each row's proximity arithmetically from its
+index — a fixed row height and gap mean no `GeometryReader` per row. Proximity
+runs through the same smoothstep curve as the original and drives the shift,
+the colour blend, the rule length and the tick length together.
+
+The wheel places entries on a circle whose radius keeps the arc between
+neighbours exactly one row tall, so the tilt angle controls how tightly it
+curls. Only entries within seven steps of the middle are built; past that they
+are transparent anyway, and a several-hundred-track playlist would otherwise
+lay out every row. SwiftUI has no scroll-wheel modifier on macOS, so a small
+`NSView` behind the wheel forwards `scrollWheel` deltas.
 
 ### Media keys
 
